@@ -1,0 +1,11 @@
+[package]
+name = "claude-tab-indicator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+zellij-tile = "=0.44.3"
+
+[[bin]]
+name = "claude-tab-indicator"
+path = "src/main.rs"
