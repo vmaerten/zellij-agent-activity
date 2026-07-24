@@ -65,7 +65,8 @@ No new status bar, no new column, no rename war. Your existing tab name, with a 
 
 ## Requirements
 
-- **Zellij ≥ 0.44.3** (`zellij --version`).
+- **Zellij ≥ 0.44.3** (`zellij --version`) — built against `zellij-tile 0.44.x`; a newer Zellij
+  minor may require a rebuild.
 - **[`zellij-tab-namer`](https://github.com/vmaerten/zellij-tab-namer)** loaded — this plugin
   drives it and does nothing on its own (a standalone mode is on the roadmap).
 - **`jq`** and **bash** — used by the hook that forwards Claude's events.
@@ -74,12 +75,13 @@ No new status bar, no new column, no rename war. Your existing tab name, with a 
 ## Install
 
 ```sh
-# 1. Build to wasm (once: rustup target add wasm32-wasip1)
-cd zellij-agent-activity && cargo wasm      # -> target/wasm32-wasip1/release/zellij-agent-activity.wasm
-
-# 2. Drop the wasm next to the namer
-cp target/wasm32-wasip1/release/zellij-agent-activity.wasm ~/.config/zellij/plugins/
+# Download the wasm from the latest release into your plugins dir
+curl -L -o ~/.config/zellij/plugins/zellij-agent-activity.wasm \
+  https://github.com/vmaerten/zellij-agent-activity/releases/latest/download/zellij-agent-activity.wasm
 ```
+
+> Prefer building from source? See [Development](#development) — `cargo wasm` produces the same
+> `zellij-agent-activity.wasm`; drop it into `~/.config/zellij/plugins/`.
 
 Load it alongside the namer in `~/.config/zellij/config.kdl`:
 
