@@ -214,13 +214,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "claude-tab-indicator"
-version = "0.1.0"
-dependencies = [
- "zellij-tile",
-]
-
-[[package]]
 name = "colored"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2798,6 +2791,13 @@ dependencies = [
  "quote",
  "syn 2.0.117",
  "synstructure",
+]
+
+[[package]]
+name = "zellij-agent-activity"
+version = "0.1.0"
+dependencies = [
+ "zellij-tile",
 ]
 
 [[package]]

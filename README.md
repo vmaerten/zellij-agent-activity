@@ -1,9 +1,10 @@
-# claude-tab-indicator
+# zellij-agent-activity
 
-A tiny [Zellij](https://zellij.dev) plugin that shows **what Claude Code is doing right now**
-as a symbol in front of the tab it runs in — `⚡` running a command, `✎` editing, `⚠` waiting
+A tiny [Zellij](https://zellij.dev) plugin that shows **what your AI coding agent is doing right
+now** as a symbol in front of the tab it runs in — `⚡` running a command, `✎` editing, `⚠` waiting
 for you, `✓` done — so you can glance across a many-tab session and see, without switching, which
-agent needs you.
+agent needs you. Harness-neutral by design; **Claude Code** is wired up today, others (Codex,
+Gemini CLI, opencode) are a hook script away.
 
 <p align="center">
   <img alt="Zellij plugin" src="https://img.shields.io/badge/zellij-plugin-8A2BE2">
@@ -30,12 +31,12 @@ agent needs you.
 
 ## What is it?
 
-Claude Code spends long stretches working, then quietly blocks on a permission prompt — or
-finishes — while you're looking at another tab. In a busy Zellij session it's easy to lose track
-of which agent is waiting on you.
+AI coding agents spend long stretches working, then quietly block on a permission prompt — or
+finish — while you're looking at another tab. In a busy Zellij session it's easy to lose track of
+which one is waiting on you.
 
-`claude-tab-indicator` surfaces that at a glance: a single symbol in the tab name that tracks the
-live activity of the Claude session in that tab's pane.
+`zellij-agent-activity` surfaces that at a glance: a single symbol in the tab name that tracks the
+live activity of the agent session in that tab's pane (Claude Code today).
 
 The twist — and the whole point — is **it never renames your tabs itself.** Zellij lets only one
 plugin own a tab's name, and two that fight over it produce flickering, focus-clearing renames.
@@ -73,12 +74,11 @@ No new status bar, no new column, no rename war. Your existing tab name, with a 
 ## Install
 
 ```sh
-# 1. Build both plugins to wasm
-cargo install-update  # (or: rustup target add wasm32-wasip1)
-cd claude-tab-indicator && cargo wasm      # -> target/wasm32-wasip1/release/claude-tab-indicator.wasm
+# 1. Build to wasm (once: rustup target add wasm32-wasip1)
+cd zellij-agent-activity && cargo wasm      # -> target/wasm32-wasip1/release/zellij-agent-activity.wasm
 
 # 2. Drop the wasm next to the namer
-cp target/wasm32-wasip1/release/claude-tab-indicator.wasm ~/.config/zellij/plugins/
+cp target/wasm32-wasip1/release/zellij-agent-activity.wasm ~/.config/zellij/plugins/
 ```
 
 Load it alongside the namer in `~/.config/zellij/config.kdl`:
@@ -86,7 +86,7 @@ Load it alongside the namer in `~/.config/zellij/config.kdl`:
 ```kdl
 load_plugins {
     "file:~/.config/zellij/plugins/zellij-tab-namer.wasm";
-    "file:~/.config/zellij/plugins/claude-tab-indicator.wasm";
+    "file:~/.config/zellij/plugins/zellij-agent-activity.wasm";
 }
 ```
 
@@ -103,9 +103,9 @@ hooks at launch — and the tab prefix comes alive.
 ## How it works
 
 ```
-Claude Code hook            claude-tab-indicator-hook.sh        claude-tab-indicator (wasm)
+Claude Code hook            zellij-agent-activity-hook.sh        zellij-agent-activity (wasm)
 (~/.claude/settings.json) ─►  $ZELLIJ_PANE_ID + event + ts  ─►   pane → tab · event → symbol
-   PreToolUse/Bash            zellij pipe --name claude_activity   highest-priority per tab
+   PreToolUse/Bash            zellij pipe --name agent_activity   highest-priority per tab
                                                                           │
                                                           pipe_message_to_plugin("set_prefix")
                                                                   routed by name, by tab_id
@@ -145,7 +145,7 @@ hidden behind a background pane's activity.
 
 ## How is this different?
 
-| Tool | What it is | How `claude-tab-indicator` differs |
+| Tool | What it is | How `zellij-agent-activity` differs |
 |---|---|---|
 | [zellij-attention](https://github.com/KiryuuLight/zellij-attention) | Binary `⏳`/`✅` by renaming the tab itself | Richer per-tool states, and it drives the namer instead of fighting it for `TabInfo.name` |
 | [zj-radar](https://github.com/marktoda/zj-radar) | A left sidebar rail (that also renames tabs) | No new UI and no name ownership — just a prefix on your existing tab, via a dedicated namer |
@@ -157,7 +157,7 @@ The short version: **one plugin owns the tab name; everything else decorates.**
 
 ```sh
 cargo test    # pure core, host-native, no zellij needed
-cargo wasm    # release build -> target/wasm32-wasip1/release/claude-tab-indicator.wasm
+cargo wasm    # release build -> target/wasm32-wasip1/release/zellij-agent-activity.wasm
 ```
 
 The plugin is a pure state machine (events in → effects out) with a thin, wasm-gated adapter that

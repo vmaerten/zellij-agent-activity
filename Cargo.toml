@@ -1,11 +1,16 @@
 [package]
-name = "claude-tab-indicator"
+name = "zellij-agent-activity"
 version = "0.1.0"
 edition = "2021"
+description = "A Zellij plugin that shows your AI coding agent's live activity (running / editing / waiting / done) as a symbol on the tab, by driving zellij-tab-namer."
+license = "MIT"
+repository = "https://github.com/vmaerten/zellij-agent-activity"
+keywords = ["zellij", "plugin", "wasm", "claude", "agent"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 zellij-tile = "=0.44.3"
 
 [[bin]]
-name = "claude-tab-indicator"
+name = "zellij-agent-activity"
 path = "src/main.rs"
