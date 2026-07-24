@@ -9,7 +9,7 @@ keywords = ["zellij", "plugin", "wasm", "claude", "agent"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-zellij-tile = "=0.44.3"
+zellij-tile = "0.44"
 
 [[bin]]
 name = "zellij-agent-activity"
