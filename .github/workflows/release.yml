@@ -38,22 +38,52 @@ jobs:
       - name: Build wasm
         run: cargo build --release --target wasm32-wasip1
 
+      # CHANGELOG.md is the source of truth: it is generated and committed by
+      # `task release` before the tag, so the Release body is extracted from it
+      # rather than regenerated — no git-cliff in CI, and the two can't diverge.
+      - name: Assemble release notes
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          ver="${TAG#v}"
+
+          # The Zellij compat floor is derived from the lockfile, never hardcoded.
+          zt="$(grep -A2 'name = "zellij-tile"' Cargo.lock \
+            | grep version | head -n1 | cut -d'"' -f2)"
+
+          section="$(awk -v ver="$ver" '
+            $0 ~ "^## \\[" ver "\\]" {found=1; next}
+            found && (/^## \[/ || /^\[[^]]+\]: /) {exit}
+            found {print}
+          ' CHANGELOG.md)"
+
+          if [ -z "$(printf '%s' "$section" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG.md has no section for $ver — run 'task changelog NEW=$ver'"
+            exit 1
+          fi
+
+          {
+            printf '## Compatibility\n\n'
+            printf 'Built against `zellij-tile %s` — requires **Zellij >= %s**.\n' "$zt" "$zt"
+            printf 'Full matrix and migration notes: [docs/COMPATIBILITY.md](%s/blob/%s/docs/COMPATIBILITY.md)\n\n' "$REPO_URL" "$TAG"
+            printf '## Changes\n%s\n\n' "$section"
+            printf '## Install\n\n'
+            printf '```sh\n'
+            printf 'curl -L -o ~/.config/zellij/plugins/zellij-agent-activity.wasm \\\n'
+            printf '  %s/releases/download/%s/zellij-agent-activity.wasm\n' "$REPO_URL" "$TAG"
+            printf '```\n\n'
+            printf 'Load it alongside `zellij-tab-namer` in `~/.config/zellij/config.kdl` (see the README).\n'
+          } > RELEASE_NOTES.md
+
+          echo "--- release notes ---"
+          cat RELEASE_NOTES.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ env.WASM }}
-          generate_release_notes: true
-          body: |
-            ## Compatibility
-
-            Built against `zellij-tile 0.44.x` — requires **Zellij ≥ 0.44.3**.
-            Tested on Zellij 0.44.x; a newer Zellij minor may require a rebuild.
-
-            ## Install
-
-            ```sh
-            curl -L -o ~/.config/zellij/plugins/zellij-agent-activity.wasm \
-              https://github.com/vmaerten/zellij-agent-activity/releases/download/${{ github.ref_name }}/zellij-agent-activity.wasm
-            ```
-
-            Load it alongside `zellij-tab-namer` in `~/.config/zellij/config.kdl` (see the README).
+          body_path: RELEASE_NOTES.md
+          # The curated changelog replaces GitHub's auto notes, which would list
+          # the same changes a second time.
+          generate_release_notes: false
