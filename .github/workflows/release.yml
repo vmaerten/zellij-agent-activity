@@ -18,13 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (bundles the cargo cache)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          targets: wasm32-wasip1
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+          target: wasm32-wasip1
+          rustflags: ""
 
       - name: Verify tag matches Cargo.toml version
         run: |

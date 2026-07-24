@@ -10,8 +10,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
+# setup-rust-toolchain bundles the cargo cache and installs the Rust problem
+# matcher, so compiler/clippy/rustfmt errors are annotated inline on the PR.
+# `rustflags: ""` keeps the action from setting a global RUSTFLAGS=-D warnings,
+# which would also apply to dependencies — the clippy job already gates our own
+# code on warnings.
 
 jobs:
   fmt:
@@ -19,9 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
+          cache: false
+          rustflags: ""
       - run: cargo fmt --all --check
 
   clippy:
@@ -29,10 +34,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+          rustflags: ""
       - run: cargo clippy --all-targets -- -D warnings
 
   test:
@@ -40,8 +45,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
       - run: cargo test
 
   wasm:
@@ -49,8 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          targets: wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
+          target: wasm32-wasip1
+          rustflags: ""
       - run: cargo build --release --target wasm32-wasip1
