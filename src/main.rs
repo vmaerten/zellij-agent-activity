@@ -27,6 +27,20 @@ enum Effect {
     /// the Claude Code hook into `~/.claude/settings.json`.
     RunCommand(Vec<String>, BTreeMap<String, String>),
     UnblockCliPipe(String),
+    /// A diagnostic line. Only ever emitted when the plugin is loaded with
+    /// `debug true`; the adapter writes it to stderr, which zellij captures in
+    /// its log. Being an effect keeps the tracing testable and host-free.
+    Log(String),
+}
+
+/// Queue a diagnostic line. Costs a bool check when debug is off — the `format!`
+/// is never evaluated, so instrumentation can be liberal.
+macro_rules! trace {
+    ($state:expr, $($arg:tt)*) => {
+        if $state.debug {
+            $state.effects.push(Effect::Log(format!($($arg)*)));
+        }
+    };
 }
 
 /// What an agent is doing in a pane. Aggregated per tab by max priority so a
@@ -78,13 +92,18 @@ fn tool_symbol(name: &str) -> &'static str {
 /// `SessionEnd` is handled separately (clear). `Notification` is the event
 /// Claude fires whenever it needs the user (permission prompt or idle nudge), so
 /// it is the `Waiting` signal — not informational (ADR-0003, amended).
+///
+/// `SubagentStop` maps to nothing on purpose: a `Task` subagent finishing says
+/// nothing about the main agent, which shares the same pane and may well be
+/// mid-tool or blocked on a permission prompt. Treating it as `Done` flipped the
+/// tab to `✓` while Claude was in fact waiting on the user (ADR-0003, amended).
 fn activity_from_event(event: &str, tool: &str) -> Option<Activity> {
     Some(match event {
         "SessionStart" => Activity::Init,
         "PreToolUse" => Activity::Tool(tool.to_string()),
         "PostToolUse" | "UserPromptSubmit" => Activity::Thinking,
         "Notification" => Activity::Waiting,
-        "Stop" | "SubagentStop" => Activity::Done,
+        "Stop" => Activity::Done,
         _ => return None,
     })
 }
@@ -106,6 +125,8 @@ struct State {
     /// pane_id → last activity send-time (ms); drops events racing in out of
     /// order through parallel hook subprocesses (ADR-0003).
     last_ts: HashMap<u32, u64>,
+    /// Emit `Effect::Log` diagnostics — set from the `debug` plugin config key.
+    debug: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -117,8 +138,8 @@ register_plugin!(State);
 
 #[cfg(target_arch = "wasm32")]
 impl ZellijPlugin for State {
-    fn load(&mut self, _config: BTreeMap<String, String>) {
-        let effects = self.init();
+    fn load(&mut self, config: BTreeMap<String, String>) {
+        let effects = self.init(&config);
         self.drive(effects);
     }
 
@@ -149,6 +170,9 @@ impl State {
                     run_command(&argv, context);
                 }
                 Effect::UnblockCliPipe(id) => unblock_cli_pipe_input(&id),
+                // Plugin stdout is the render surface, so diagnostics go to
+                // stderr — zellij funnels it into its own log file.
+                Effect::Log(line) => eprintln!("[zellij-agent-activity] {line}"),
                 Effect::ShowActivity { tab_id, prefix } => {
                     let mut args = BTreeMap::new();
                     args.insert("tab_id".to_string(), tab_id.to_string());
@@ -171,7 +195,9 @@ impl State {
 // ─── Core: pure state machine, events in → effects out, host-free ───────────
 
 impl State {
-    fn init(&mut self) -> Vec<Effect> {
+    fn init(&mut self, config: &BTreeMap<String, String>) -> Vec<Effect> {
+        self.debug = matches!(config.get("debug").map(String::as_str), Some("true" | "1"));
+        trace!(self, "debug tracing on (config: {config:?})");
         self.effects.push(Effect::RequestPermissions(vec![
             PermissionType::ReadApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
@@ -202,6 +228,7 @@ impl State {
     }
 
     fn handle_pipe(&mut self, message: PipeMessage) -> Vec<Effect> {
+        trace!(self, "pipe '{}' args={:?}", message.name, message.args);
         if let PipeSource::Cli(pipe_id) = &message.source {
             // The hook's `zellij pipe` blocks until we unblock it.
             self.effects.push(Effect::UnblockCliPipe(pipe_id.clone()));
@@ -214,28 +241,47 @@ impl State {
 
     fn on_activity(&mut self, args: &BTreeMap<String, String>) {
         let Some(pane_id) = args.get("pane_id").and_then(|s| s.parse::<u32>().ok()) else {
+            trace!(self, "drop: no usable pane_id in {args:?}");
             return;
         };
         // Ordering: a stale event never overwrites a newer one for this pane.
         if let Some(ts) = args.get("ts_ms").and_then(|s| s.parse::<u64>().ok()) {
-            if self.last_ts.get(&pane_id).is_some_and(|&last| ts < last) {
-                return;
+            if let Some(&last) = self.last_ts.get(&pane_id) {
+                if ts < last {
+                    trace!(self, "pane {pane_id}: drop, stale ts {ts} < {last}");
+                    return;
+                }
             }
             self.last_ts.insert(pane_id, ts);
         }
         let Some(&tab_id) = self.pane_to_tab.get(&pane_id) else {
-            return; // pane not mapped yet — Claude events arrive long after load
+            // pane not mapped yet — Claude events arrive long after load
+            trace!(self, "pane {pane_id}: drop, not mapped to a tab yet");
+            return;
         };
         let event = args.get("hook_event").map(|s| s.as_str()).unwrap_or("");
         if event == "SessionEnd" {
+            trace!(self, "pane {pane_id} (tab {tab_id}): SessionEnd -> cleared");
             self.pane_activity.remove(&pane_id);
             self.recompute_tab(tab_id);
             return;
         }
         let tool = args.get("tool_name").map(|s| s.as_str()).unwrap_or("");
-        if let Some(activity) = activity_from_event(event, tool) {
-            self.pane_activity.insert(pane_id, activity);
-            self.recompute_tab(tab_id);
+        match activity_from_event(event, tool) {
+            Some(activity) => {
+                trace!(
+                    self,
+                    "pane {pane_id} (tab {tab_id}): {event}/{tool} -> {activity:?}"
+                );
+                self.pane_activity.insert(pane_id, activity);
+                self.recompute_tab(tab_id);
+            }
+            // Unmapped events (`SubagentStop`, anything Claude adds later) leave
+            // the pane as it was — this is the branch that must NOT flip to ✓.
+            None => trace!(
+                self,
+                "pane {pane_id} (tab {tab_id}): {event}/{tool} unmapped, state kept"
+            ),
         }
     }
 
@@ -244,6 +290,7 @@ impl State {
         let alive: HashSet<usize> = tabs.iter().map(|t| t.tab_id).collect();
         self.shown.retain(|id, _| alive.contains(id));
         self.rebuild_pane_to_tab();
+        trace!(self, "tabs: position->tab_id {:?}", self.tab_id_by_pos);
         self.recompute_all();
     }
 
@@ -264,6 +311,7 @@ impl State {
         self.pane_activity.retain(|id, _| alive.contains(id));
         self.last_ts.retain(|id, _| alive.contains(id));
         self.rebuild_pane_to_tab();
+        trace!(self, "panes: pane_id->tab_id {:?}", self.pane_to_tab);
         self.recompute_all();
     }
 
@@ -307,6 +355,7 @@ impl State {
                 self.shown.remove(&tab_id);
             }
         }
+        trace!(self, "tab {tab_id}: prefix -> {desired:?}");
         self.effects.push(Effect::ShowActivity {
             tab_id,
             prefix: desired,
@@ -380,10 +429,20 @@ mod tests {
             .collect()
     }
 
+    fn log_lines(effects: &[Effect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Log(line) => Some(line.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn init_requests_permissions_and_subscribes() {
         let mut state = State::default();
-        let effects = state.init();
+        let effects = state.init(&BTreeMap::new());
         assert_eq!(
             effects,
             vec![
@@ -667,6 +726,103 @@ mod tests {
             ("hook_event", "SessionEnd"),
         ]));
         assert_eq!(show_effects(&effects), vec![]);
+    }
+
+    #[test]
+    fn subagent_stop_never_flips_a_waiting_pane_to_done() {
+        // The live incident this guards against: the main agent was blocked on a
+        // permission prompt (`Notification` → ⚠) while two `Task` subagents were
+        // still running *in the same pane*. Each one finishing fired
+        // `SubagentStop`, which used to mean `Done` — so the tab showed ✓ while
+        // Claude was in fact waiting on the user.
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+            ("ts_ms", "1000"),
+        ]));
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("ts_ms", "2000"),
+        ]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "SubagentStop"),
+            ("ts_ms", "3000"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![]);
+        assert_eq!(state.shown.get(&1), Some(&"⚠ ".to_string()));
+    }
+
+    #[test]
+    fn stop_alone_marks_the_pane_done() {
+        // The counterpart: only the *main* agent's `Stop` ends the turn.
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+        ]));
+        let effects =
+            state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        assert_eq!(show_effects(&effects), vec![(1, Some("✓ ".to_string()))]);
+    }
+
+    #[test]
+    fn debug_off_emits_no_log_effects() {
+        let mut state = State::default();
+        let mut effects = state.init(&BTreeMap::new());
+        effects.extend(state.handle(Event::TabUpdate(vec![tab(1, 0, true)])));
+        effects.extend(state.handle(Event::PaneUpdate(manifest(&[(0, &[10])]))));
+        effects.extend(state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ])));
+        assert_eq!(log_lines(&effects), Vec::<String>::new());
+    }
+
+    #[test]
+    fn debug_on_traces_the_whole_decision_path() {
+        let mut state = State::default();
+        state.init(&BTreeMap::from([("debug".to_string(), "true".to_string())]));
+        state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
+        state.handle(Event::PaneUpdate(manifest(&[(0, &[10])])));
+
+        // An event the plugin acts on: received, mapped, and emitted.
+        let acted = log_lines(&state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ])));
+        assert!(
+            acted.iter().any(|l| l.contains("PreToolUse/Bash -> Tool"))
+                && acted.iter().any(|l| l.contains("tab 1: prefix -> Some")),
+            "must trace the mapping and the emission, got {acted:?}"
+        );
+
+        // An event it deliberately ignores must say so rather than go silent —
+        // that silence is what made the ✓ bug invisible.
+        let ignored = log_lines(&state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "SubagentStop"),
+        ])));
+        assert!(
+            ignored.iter().any(|l| l.contains("unmapped, state kept")),
+            "must trace the ignored event, got {ignored:?}"
+        );
+
+        // And a dropped one must name the reason.
+        let dropped = log_lines(
+            &state.handle_pipe(activity_pipe(&[("pane_id", "777"), ("hook_event", "Stop")])),
+        );
+        assert!(
+            dropped
+                .iter()
+                .any(|l| l.contains("not mapped to a tab yet")),
+            "must trace the drop reason, got {dropped:?}"
+        );
     }
 
     #[test]
