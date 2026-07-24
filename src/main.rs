@@ -460,8 +460,14 @@ mod tests {
         let mut state = State::default();
         state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10, 11])])));
-        state.handle_pipe(activity_pipe(&[("pane_id", "11"), ("hook_event", "PostToolUse")]));
-        state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Notification")]));
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "11"),
+            ("hook_event", "PostToolUse"),
+        ]));
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+        ]));
 
         // pane 10 finishes its session → Waiting gone, Thinking (pane 11) wins.
         let effects = state.handle_pipe(activity_pipe(&[
@@ -525,12 +531,18 @@ mod tests {
         let mut state = State::default();
         state.handle(Event::TabUpdate(vec![tab(1, 0, true), tab(2, 1, false)]));
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10]), (1, &[20])])));
-        state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Notification")]));
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+        ]));
 
         // pane 10 moves from tab 1 (pos 0) to tab 2 (pos 1).
         let effects = state.handle(Event::PaneUpdate(manifest(&[(0, &[]), (1, &[20, 10])])));
         let shows = show_effects(&effects);
-        assert!(shows.contains(&(1, None)), "old tab must clear, got {shows:?}");
+        assert!(
+            shows.contains(&(1, None)),
+            "old tab must clear, got {shows:?}"
+        );
         assert!(
             shows.contains(&(2, Some("⚠ ".to_string()))),
             "new tab must show the symbol, got {shows:?}"
@@ -620,7 +632,8 @@ mod tests {
     #[test]
     fn done_persists_as_check_prefix() {
         let mut state = ready_state();
-        let effects = state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        let effects =
+            state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
         assert_eq!(show_effects(&effects), vec![(1, Some("✓ ".to_string()))]);
         assert_eq!(state.shown.get(&1), Some(&"✓ ".to_string()));
     }
