@@ -51,8 +51,22 @@ tasks:
       - cargo update --workspace --quiet
       - 'echo "bumped -> {{.NEW}}"'
 
+  changelog:
+    desc: 'Regenerate CHANGELOG.md for a version. Prompts for NEW if omitted. Usage: task changelog [NEW=0.2.0]'
+    requires:
+      vars:
+        - name: NEW
+    preconditions:
+      - sh: 'command -v mise >/dev/null'
+        msg: "mise is required (https://mise.jdx.dev) — it pins git-cliff for this repo; then run 'mise install'."
+    cmds:
+      # Full regeneration (not --prepend): deterministic, no drift between runs.
+      # `--tag` attributes the not-yet-tagged commits to the version being cut.
+      - mise exec -- git-cliff --tag v{{.NEW}} -o CHANGELOG.md
+      - 'echo "CHANGELOG.md regenerated for v{{.NEW}}"'
+
   release:
-    desc: 'Bump, run CI, commit, tag and push. Prompts for NEW if omitted. Usage: task release [NEW=0.2.0]'
+    desc: 'Bump, changelog, CI, commit, tag and push. Prompts for NEW if omitted. Usage: task release [NEW=0.2.0]'
     requires:
       vars:
         - name: NEW
@@ -67,8 +81,10 @@ tasks:
     cmds:
       - task: bump
         vars: { NEW: '{{.NEW}}' }
+      - task: changelog
+        vars: { NEW: '{{.NEW}}' }
       - task: ci
-      - git add Cargo.toml Cargo.lock
+      - git add Cargo.toml Cargo.lock CHANGELOG.md
       - "git commit -m '🔖 chore: release v{{.NEW}}'"
       - git tag v{{.NEW}}
       - git push origin HEAD
