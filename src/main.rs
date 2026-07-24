@@ -8,7 +8,7 @@ use zellij_tile::prelude::*;
 mod installer;
 
 /// Pipe name the hook forwards Claude activity on.
-const PIPE_NAME: &str = "claude_activity";
+const PIPE_NAME: &str = "agent_activity";
 
 /// Everything the plugin can do to the world. The core only emits these; the
 /// wasm adapter's `drive` is the sole place they touch the zellij host — so the

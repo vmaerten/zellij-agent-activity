@@ -5,12 +5,12 @@
 
 use std::collections::BTreeMap;
 
-const HOOK_VERSION_TAG: &str = concat!("# claude-tab-indicator v", env!("CARGO_PKG_VERSION"));
+const HOOK_VERSION_TAG: &str = concat!("# zellij-agent-activity v", env!("CARGO_PKG_VERSION"));
 
 /// The hook script content with the version tag inserted after the shebang, so a
 /// reinstall can detect whether the on-disk hook is already current.
 fn hook_script_content() -> String {
-    let original = include_str!("../scripts/claude-tab-indicator-hook.sh");
+    let original = include_str!("../scripts/zellij-agent-activity-hook.sh");
     if let Some(pos) = original.find('\n') {
         let (shebang, rest) = original.split_at(pos);
         format!("{shebang}\n{HOOK_VERSION_TAG}{rest}")
@@ -20,8 +20,8 @@ fn hook_script_content() -> String {
 }
 
 const INSTALL_TEMPLATE: &str = r##"set -e
-HOOK_PATH="$HOME/.config/zellij/plugins/claude-tab-indicator-hook.sh"
-HOOK_CMD='${HOME}/.config/zellij/plugins/claude-tab-indicator-hook.sh'
+HOOK_PATH="$HOME/.config/zellij/plugins/zellij-agent-activity-hook.sh"
+HOOK_CMD='${HOME}/.config/zellij/plugins/zellij-agent-activity-hook.sh'
 SETTINGS="$HOME/.claude/settings.json"
 
 resolve_file_symlink() {
@@ -72,14 +72,14 @@ fi
 # Back up settings before modifying
 cp "$SETTINGS" "$SETTINGS.bak"
 
-# Remove ALL existing claude-tab-indicator hook entries (any path ending in our script)
+# Remove ALL existing zellij-agent-activity hook entries (any path ending in our script)
 tmp=$(mktemp)
 jq '
   if .hooks and (.hooks | type == "object") then
     .hooks |= with_entries(
       .value |= [
         .[] | . as $group |
-        ($group.hooks // []) | map(select((.command // "") | endswith("claude-tab-indicator-hook.sh") | not)) |
+        ($group.hooks // []) | map(select((.command // "") | endswith("zellij-agent-activity-hook.sh") | not)) |
         . as $filtered |
         if length > 0 then ($group | .hooks = $filtered) else empty end
       ]

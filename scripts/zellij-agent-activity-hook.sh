@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# claude-tab-indicator-hook.sh — Claude Code hook → zellij pipe bridge.
-# Forwards Claude hook events to the claude-tab-indicator plugin, which shows the
+# zellij-agent-activity-hook.sh — Claude Code hook → zellij pipe bridge.
+# Forwards Claude hook events to the zellij-agent-activity plugin, which shows the
 # activity as a prefix on the tab (via zellij-tab-namer). Minimal forwarder only
 # (ADR-0003): no desktop notifications, no bell.
 #
 # Register in ~/.claude/settings.json (the plugin's installer does this for you):
-#   "command": "${HOME}/.config/zellij/plugins/claude-tab-indicator-hook.sh"
+#   "command": "${HOME}/.config/zellij/plugins/zellij-agent-activity-hook.sh"
 
 # Do nothing outside a Zellij session — there is no pane to decorate.
 [ -z "$ZELLIJ_SESSION_NAME" ] && exit 0
@@ -33,7 +33,7 @@ ARGS="pane_id=${ZELLIJ_PANE_ID},hook_event=${HOOK_EVENT},tool_name=${TOOL_NAME},
 # hits EMFILE and crashes (the zellij-smart-tabs failure). So self-limit it: run
 # the pipe with a ~5s watchdog that kills it if the plugin never answers. The
 # plugin normally unblocks in milliseconds; this only bites when it can't.
-zellij pipe --name claude_activity --args "$ARGS" &
+zellij pipe --name agent_activity --args "$ARGS" &
 pipe_pid=$!
 ( sleep 5; kill "$pipe_pid" 2>/dev/null ) &
 watchdog_pid=$!
