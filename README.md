@@ -94,7 +94,7 @@ load_plugins {
 ```
 
 Restart Zellij and **grant the plugin's permissions** when prompted
-(`ReadApplicationState`, `MessageAndLaunchOtherPlugins`, `RunCommands`). On that grant the plugin
+(`ReadApplicationState`, `MessageAndLaunchOtherPlugins`, `ReadCliPipes`, `RunCommands`). On that grant the plugin
 **auto-installs its Claude Code hook** into `~/.claude/settings.json` (idempotent, backed up to
 `.bak`, and it never touches your other hooks). Start a **new** Claude session — Claude reads its
 hooks at launch — and the tab prefix comes alive.

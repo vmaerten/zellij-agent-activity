@@ -201,6 +201,12 @@ impl State {
         self.effects.push(Effect::RequestPermissions(vec![
             PermissionType::ReadApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
+            // Covers `unblock_cli_pipe_input`, which the host denies without it
+            // — silently, and (measured) harmlessly, since zellij releases the
+            // pipe on its own anyway. The call is a defensive belt over that;
+            // the grant just keeps it from being a denied no-op that floods the
+            // zellij log (ADR-0003).
+            PermissionType::ReadCliPipes,
             PermissionType::RunCommands,
         ]));
         self.effects.push(Effect::Subscribe(vec![
@@ -449,6 +455,8 @@ mod tests {
                 Effect::RequestPermissions(vec![
                     PermissionType::ReadApplicationState,
                     PermissionType::MessageAndLaunchOtherPlugins,
+                    // Missing this one is invisible at runtime — see `init`.
+                    PermissionType::ReadCliPipes,
                     PermissionType::RunCommands,
                 ]),
                 Effect::Subscribe(vec![
@@ -457,6 +465,36 @@ mod tests {
                     EventType::PermissionRequestResult,
                 ]),
             ]
+        );
+    }
+
+    #[test]
+    fn unblocking_a_cli_pipe_is_covered_by_a_requested_permission() {
+        // The plugin unblocks every CLI pipe it receives, and the host denies
+        // that without `ReadCliPipes` — silently, since the event itself still
+        // lands and the symbols keep working. Bind effect and grant together so
+        // one can't drift from the other, which is how it went unnoticed.
+        let mut state = State::default();
+        let requested = match state.init(&BTreeMap::new()).first() {
+            Some(Effect::RequestPermissions(perms)) => perms.clone(),
+            other => panic!("init must request permissions first, got {other:?}"),
+        };
+        let effects = state.handle_pipe(PipeMessage {
+            source: PipeSource::Cli("pipe-1".to_string()),
+            name: PIPE_NAME.to_string(),
+            payload: None,
+            args: BTreeMap::new(),
+            is_private: false,
+        });
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::UnblockCliPipe(_))),
+            "a CLI pipe must be unblocked, got {effects:?}"
+        );
+        assert!(
+            requested.contains(&PermissionType::ReadCliPipes),
+            "…so ReadCliPipes must be requested, got {requested:?}"
         );
     }
 
