@@ -20,6 +20,7 @@ Gemini CLI, opencode) are a hook script away.
   <a href="#install">Install</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#activity-reference">Activity reference</a> ·
+  <a href="#debugging">Debugging</a> ·
   <a href="#how-is-this-different">How is this different?</a>
 </p>
 
@@ -138,12 +139,69 @@ Design decisions are recorded as ADRs in [`docs/adr/`](docs/adr).
 | `PreToolUse` · `WebSearch` / `WebFetch` | web | `◈` |
 | `PreToolUse` · other / MCP | tool | `⚙` |
 | `Notification` | **needs you** (permission / idle) | `⚠` |
-| `Stop`, `SubagentStop` | done | `✓` |
+| `Stop` | done | `✓` |
+| `SubagentStop` | — (ignored, see below) | |
 | `SessionEnd` | — (clears the prefix) | |
 
 When a tab holds several Claude panes, the highest-priority state wins
 (`⚠ waiting > tool > ● thinking > ◆ init > ✓ done`) — a pending permission request is never
 hidden behind a background pane's activity.
+
+`SubagentStop` is deliberately *not* "done": `Task` subagents run inside the **main agent's pane**,
+so one of them finishing tells you nothing about the agent that owns the pane — which may well be
+mid-tool, or blocked on a permission prompt. Only the main agent's `Stop` ends the turn.
+
+## Debugging
+
+A wrong symbol on a tab has exactly two possible causes, and they need different tools: either the
+harness never fired the event you expected, or it did and the plugin decided something else. Both
+traces are opt-in and off by default.
+
+**1. What the harness fired** — point the hook at a log file, in the shell you launch Claude from:
+
+```sh
+export ZELLIJ_AGENT_ACTIVITY_LOG=~/.local/state/zellij-agent-activity/events.jsonl
+```
+
+One JSON object per event, appended as it happens:
+
+```jsonc
+{"at":"2026-07-24T20:37:16Z","ts_ms":1784925436039,"pane_id":"3","hook_event":"PreToolUse",
+ "tool":"Bash","session_id":"e14716c9…","transcript":"…/subagents/agent-a67d44….jsonl", …}
+```
+
+`transcript` tells main-agent events from subagent ones (subagents get their own transcript file),
+and `keys` lists every field the payload carried. `tool_input` is intentionally **not** logged — it
+can be large and can contain secrets.
+
+**2. What the plugin decided** — load it with `debug true` in `~/.config/zellij/config.kdl`:
+
+```kdl
+load_plugins {
+    "file:~/.config/zellij/plugins/zellij-tab-namer.wasm";
+    "file:~/.config/zellij/plugins/zellij-agent-activity.wasm" {
+        debug true
+    }
+}
+```
+
+Every pipe received, every pane→tab mapping, every event mapped, ignored or dropped (and *why*),
+and every prefix emitted goes to Zellij's own log:
+
+```sh
+tail -f "${TMPDIR:-/tmp}/zellij-$(id -u)/zellij-log/zellij.log" | grep zellij-agent-activity
+```
+
+```
+[zellij-agent-activity] pane 3 (tab 2): PreToolUse/Bash -> Tool("Bash")
+[zellij-agent-activity] tab 2: prefix -> Some("⚡ ")
+[zellij-agent-activity] pane 3 (tab 2): SubagentStop/ unmapped, state kept
+```
+
+> **After upgrading the plugin**, the hook script on disk is only rewritten when its version tag
+> changes. To force a reinstall (and re-sync the registered events in `~/.claude/settings.json`):
+> `rm ~/.config/zellij/plugins/zellij-agent-activity-hook.sh`, restart Zellij, then start a **new**
+> Claude session.
 
 ## How is this different?
 
