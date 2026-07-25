@@ -38,22 +38,20 @@ jobs:
       - name: Build wasm
         run: cargo build --release --target wasm32-wasip1
 
+      - name: Assemble release notes
+        env:
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if ! scripts/release-notes.sh "$GITHUB_REF_NAME" > RELEASE_NOTES.md; then
+            echo "::error::could not assemble the release notes (see the log above)"
+            exit 1
+          fi
+          echo "--- release notes ---"
+          cat RELEASE_NOTES.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ env.WASM }}
-          generate_release_notes: true
-          body: |
-            ## Compatibility
-
-            Built against `zellij-tile 0.44.x` — requires **Zellij ≥ 0.44.3**.
-            Tested on Zellij 0.44.x; a newer Zellij minor may require a rebuild.
-
-            ## Install
-
-            ```sh
-            curl -L -o ~/.config/zellij/plugins/zellij-agent-activity.wasm \
-              https://github.com/vmaerten/zellij-agent-activity/releases/download/${{ github.ref_name }}/zellij-agent-activity.wasm
-            ```
-
-            Load it alongside `zellij-tab-namer` in `~/.config/zellij/config.kdl` (see the README).
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false

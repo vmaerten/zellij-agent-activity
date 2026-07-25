@@ -1,5 +1,3 @@
-# Taskfile for zellij-agent-activity — https://taskfile.dev
-# Install go-task: `brew install go-task` (or see taskfile.dev/installation).
 version: '3'
 
 vars:
@@ -37,8 +35,6 @@ tasks:
 
   bump:
     desc: 'Set the Cargo.toml version. Prompts for NEW if omitted. Usage: task bump [NEW=0.2.0]'
-    # Native interactive prompt (see .taskrc.yml `interactive: true`): asks for
-    # NEW on a TTY when it isn't passed; cancels cleanly in CI/non-TTY.
     requires:
       vars:
         - name: NEW
@@ -46,15 +42,32 @@ tasks:
       - sh: 'echo "{{.NEW}}" | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+$"'
         msg: 'NEW must be semver X.Y.Z (got "{{.NEW}}")'
     cmds:
-      # Only the [package] `version = "…"` line is anchored on ^version, so
-      # dependency lines (zellij-tile = "0.44") are never touched.
       - perl -i -pe 's/^version = ".*"/version = "{{.NEW}}"/' Cargo.toml
-      # Sync Cargo.lock's own package entry (no recompile, no dep bumps).
       - cargo update --workspace --quiet
       - 'echo "bumped -> {{.NEW}}"'
 
+  changelog:
+    desc: 'Regenerate CHANGELOG.md for a version. Prompts for NEW if omitted. Usage: task changelog [NEW=0.2.0]'
+    requires:
+      vars:
+        - name: NEW
+    preconditions:
+      - sh: 'command -v mise >/dev/null'
+        msg: "mise is required (https://mise.jdx.dev) — it pins git-cliff for this repo; then run 'mise install'."
+    cmds:
+      - mise exec -- git-cliff --tag v{{.NEW}} -o CHANGELOG.md
+      - 'echo "CHANGELOG.md regenerated for v{{.NEW}}"'
+
+  release-notes:
+    desc: 'Preview the GitHub Release body. Usage: task release-notes [TAG=v0.2.0]'
+    vars:
+      TAG: '{{.TAG | default (printf "v%s" .CURRENT)}}'
+    cmds:
+      - ./scripts/release-notes.sh {{.TAG}}
+    silent: true
+
   release:
-    desc: 'Bump, run CI, commit, tag and push. Prompts for NEW if omitted. Usage: task release [NEW=0.2.0]'
+    desc: 'Bump, changelog, CI, commit, tag and push. Prompts for NEW if omitted. Usage: task release [NEW=0.2.0]'
     requires:
       vars:
         - name: NEW
@@ -69,8 +82,12 @@ tasks:
     cmds:
       - task: bump
         vars: { NEW: '{{.NEW}}' }
+      - task: changelog
+        vars: { NEW: '{{.NEW}}' }
+      - task: release-notes
+        vars: { TAG: 'v{{.NEW}}' }
       - task: ci
-      - git add Cargo.toml Cargo.lock
+      - git add Cargo.toml Cargo.lock CHANGELOG.md
       - "git commit -m '🔖 chore: release v{{.NEW}}'"
       - git tag v{{.NEW}}
       - git push origin HEAD
