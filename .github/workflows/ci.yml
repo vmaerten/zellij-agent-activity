@@ -10,11 +10,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# setup-rust-toolchain bundles the cargo cache and installs the Rust problem
-# matcher, so compiler/clippy/rustfmt errors are annotated inline on the PR.
-# `rustflags: ""` keeps the action from setting a global RUSTFLAGS=-D warnings,
-# which would also apply to dependencies — the clippy job already gates our own
-# code on warnings.
+# rustflags: "" — the action defaults to a global -D warnings that would apply
+# to dependencies too; the clippy job already gates our own code.
 
 jobs:
   fmt:
@@ -39,6 +36,13 @@ jobs:
           components: clippy
           rustflags: ""
       - run: cargo clippy --all-targets -- -D warnings
+
+  producer:
+    name: producer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/test-hook.sh
 
   test:
     name: test

@@ -22,7 +22,9 @@ that emits the same `agent_activity` pipe (`pane_id`, `hook_event`, `tool_name`,
   `AfterAgent`, `Notification`).
 - [ ] **opencode** — a tiny TS plugin that shells out to the forwarder
   (`session.idle`, `tool.execute.*`, `permission.asked`).
-- [ ] **Document the wire format** so anyone can write a producer.
+- [x] **Document the wire format** so anyone can write a producer — see
+  [The wire format](README.md#the-wire-format) in the README, and ADR-0007 for the
+  producer-normalizes / core-decides split it rests on.
 
 ## Robustness / API
 
