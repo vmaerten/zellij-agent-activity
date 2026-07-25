@@ -41,6 +41,8 @@ jobs:
       # CHANGELOG.md is the source of truth: it is generated and committed by
       # `task release` before the tag, so the Release body is extracted from it
       # rather than regenerated — no git-cliff in CI, and the two can't diverge.
+      # The prose lives in .github/release-notes.md.tmpl; this step only fills
+      # in the placeholders, so editing the notes never means editing shell.
       - name: Assemble release notes
         env:
           TAG: ${{ github.ref_name }}
@@ -52,29 +54,31 @@ jobs:
           zt="$(grep -A2 'name = "zellij-tile"' Cargo.lock \
             | grep version | head -n1 | cut -d'"' -f2)"
 
-          section="$(awk -v ver="$ver" '
+          awk -v ver="$ver" '
             $0 ~ "^## \\[" ver "\\]" {found=1; next}
             found && (/^## \[/ || /^\[[^]]+\]: /) {exit}
             found {print}
-          ' CHANGELOG.md)"
+          ' CHANGELOG.md > changes.md
 
-          if [ -z "$(printf '%s' "$section" | tr -d '[:space:]')" ]; then
+          if [ -z "$(tr -d '[:space:]' < changes.md)" ]; then
             echo "::error::CHANGELOG.md has no section for $ver — run 'task changelog NEW=$ver'"
             exit 1
           fi
 
-          {
-            printf '## Compatibility\n\n'
-            printf 'Built against `zellij-tile %s` — requires **Zellij >= %s**.\n' "$zt" "$zt"
-            printf 'Full matrix and migration notes: [docs/COMPATIBILITY.md](%s/blob/%s/docs/COMPATIBILITY.md)\n\n' "$REPO_URL" "$TAG"
-            printf '## Changes\n%s\n\n' "$section"
-            printf '## Install\n\n'
-            printf '```sh\n'
-            printf 'curl -L -o ~/.config/zellij/plugins/zellij-agent-activity.wasm \\\n'
-            printf '  %s/releases/download/%s/zellij-agent-activity.wasm\n' "$REPO_URL" "$TAG"
-            printf '```\n\n'
-            printf 'Load it alongside `zellij-tab-namer` in `~/.config/zellij/config.kdl` (see the README).\n'
-          } > RELEASE_NOTES.md
+          # `r` queues the file, `d` drops the placeholder line: the classic
+          # sed include. `|` as delimiter keeps the URLs slash-safe.
+          sed -e "s|{{ZELLIJ_TILE}}|$zt|g" \
+              -e "s|{{REPO_URL}}|$REPO_URL|g" \
+              -e "s|{{TAG}}|$TAG|g" \
+              -e "/{{CHANGES}}/r changes.md" \
+              -e "/{{CHANGES}}/d" \
+              .github/release-notes.md.tmpl > RELEASE_NOTES.md
+
+          if grep -q '{{' RELEASE_NOTES.md; then
+            echo "::error::unsubstituted placeholder left in the release notes"
+            grep -n '{{' RELEASE_NOTES.md
+            exit 1
+          fi
 
           echo "--- release notes ---"
           cat RELEASE_NOTES.md
