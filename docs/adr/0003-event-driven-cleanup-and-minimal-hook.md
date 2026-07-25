@@ -12,6 +12,8 @@ proves annoying in practice.
 The hook script is a **minimal forwarder**: it reads the Claude hook JSON on
 stdin and pipes `pane_id`, `hook_event`, `tool_name`, and a send-time `ts_ms`
 to the plugin. Nothing else. The `⚠` prefix on the tab *is* the notification.
+(ADR-0007 refines "nothing else": the forwarder also *normalizes* its harness's
+vocabulary — but it still decides nothing.)
 
 Its one addition is an **opt-in trace**, off unless `ZELLIJ_AGENT_ACTIVITY_LOG`
 names a file: one JSON line per event, appended before forwarding. It pairs with
@@ -19,31 +21,28 @@ the plugin's own `debug true` tracing (`Effect::Log` → stderr → the zellij l
 producer side answers *what the harness fired, and in what order*, consumer side
 answers *what the plugin decided*, and a wrong symbol is always one or the other.
 The `SubagentStop` bug above had to be reconstructed after the fact from Claude's
-transcript files, which is what motivated both. Fields are selected rather than
-dumped: `tool_input` is large and can hold secrets, and short lines keep the
-`O_APPEND` write atomic across parallel hook subprocesses.
+transcript files, which is what motivated both — and the trace then showed that
+reconstruction to be wrong, which is the best argument for having it. Fields are
+selected rather than dumped: `tool_input` is large and can hold secrets, and short
+lines keep the `O_APPEND` write atomic across parallel hook subprocesses.
 
-**`SubagentStop` is not a "done" signal** and is neither mapped nor registered.
-`Task` subagents run inside the *main agent's pane* and fire their hooks on the
-same `ZELLIJ_PANE_ID`, so a subagent finishing says nothing about the agent that
-owns the pane. Observed live: the main agent sat on a permission prompt (`⚠`)
-while two subagents were still running; the last one finished 10 s later, its
-`SubagentStop` mapped to `Done`, and the tab flipped to `✓` — "it says it's
-finished but it's waiting for me". Only the main agent's `Stop` ends the turn.
-
-This exposes a deeper property, left as-is for now: a pane's activity is
-last-write-wins, and priority arbitrates only *between* panes of a tab, never
-between the several agents sharing one pane. A subagent's `PostToolUse` can still
-overwrite a main-agent `⚠`. Making `Waiting` sticky — cleared only by an event
-that genuinely resolves the prompt — is the follow-up; dropping `SubagentStop`
-removes the one case that reliably lied.
+**`SubagentStop` is not a "done" signal** and is neither mapped nor registered: a
+subagent finishing says nothing about the agent that owns the pane. It was dropped
+after a tab showed `✓` while the agent sat on a permission prompt — a diagnosis
+later shown to be wrong, since tracing proved `SubagentStop` is never emitted at
+all and subagents report no hooks whatsoever. The mapping was still wrong, so the
+change stands, but that incident is **not** what it fixed and remains unexplained.
+Only the main agent's `Stop` ends the turn. See ADR-0007 for the measurements —
+including the corollary that several agents never share a pane's event stream, so
+the "key by `(pane_id, agent_id)`" follow-up once planned here is moot.
 
 The `⚠` "Claude needs you" state comes from the **`Notification`** hook, not a
 `PermissionRequest` event (Claude Code has no such hook; verified against the
-installed version and cross-checked with the zj-radar project). Claude fires
-`Notification` precisely when it wants the user's attention — a permission prompt
-or an idle nudge — so every `Notification` maps to `Waiting`. This supersedes the
-earlier design note that treated `Notification` as informational.
+installed version and cross-checked with the zj-radar project). Claude fires it
+whenever it wants the user's attention — which turned out to cover two different
+situations, a permission prompt *and* an idle nudge after the turn ended. Only the
+first is worth a `⚠`; **ADR-0007 supersedes the original "every `Notification` maps
+to `Waiting`"** and splits them at the producer.
 
 ## Consequences
 

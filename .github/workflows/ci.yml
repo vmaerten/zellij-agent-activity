@@ -40,6 +40,15 @@ jobs:
           rustflags: ""
       - run: cargo clippy --all-targets -- -D warnings
 
+  # The forwarder normalizes each harness's vocabulary (ADR-0007), so it holds the
+  # only logic outside `cargo test`. No toolchain needed — just bash and jq.
+  producer:
+    name: producer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/test-hook.sh
+
   test:
     name: test
     runs-on: ubuntu-latest

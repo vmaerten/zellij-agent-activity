@@ -35,9 +35,30 @@ fi
 
 [ -z "$HOOK_EVENT" ] && exit 0
 
+# `Notification` carries two different signals and only `message` separates them:
+# a permission prompt (the user must act) from an idle nudge fired ~60s after the
+# turn ended (nothing to do). Normalizing that wording is the producer's job — the
+# core must stay free of any harness vocabulary (ADR-0007). Unknown wording falls
+# back to `permission`: a spurious ⚠ costs far less than a missed one.
+NOTIFICATION=""
+if [ "$HOOK_EVENT" = "Notification" ]; then
+  MESSAGE=$(printf '%s' "$INPUT" | jq -r '(.message // "") | ascii_downcase')
+  case "$MESSAGE" in
+    *"waiting for your input"*) NOTIFICATION="idle" ;;
+    *) NOTIFICATION="permission" ;;
+  esac
+fi
+
 # hook_event and tool_name are Claude identifiers (e.g. Bash, mcp__x__y) — no
 # commas or equals — so the comma-separated --args form is safe.
 ARGS="pane_id=${ZELLIJ_PANE_ID},hook_event=${HOOK_EVENT},tool_name=${TOOL_NAME},ts_ms=${TS_MS}"
+[ -n "$NOTIFICATION" ] && ARGS="${ARGS},notification=${NOTIFICATION}"
+
+# Lets scripts/test-hook.sh exercise the normalization above without a zellij.
+if [ -n "$ZELLIJ_AGENT_ACTIVITY_DRY_RUN" ]; then
+  printf '%s\n' "$ARGS"
+  exit 0
+fi
 
 # `zellij pipe` is NOT fire-and-forget: it blocks until the plugin consumes the
 # message. If the plugin is absent or stuck (e.g. on its own permission prompt),
