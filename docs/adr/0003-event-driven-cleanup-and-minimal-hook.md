@@ -55,6 +55,21 @@ earlier design note that treated `Notification` as informational.
   can leak file descriptors until the zellij server hits `EMFILE` (the failure
   that killed `zellij-smart-tabs`). The hook therefore wraps the pipe in a
   self-limiting ~5s timeout that survives the hook runner being killed.
+- `unblock_cli_pipe_input` needs the **`ReadCliPipes`** permission, which went
+  unrequested from the start — 3157 denials in one zellij log before anyone
+  looked. Measured A/B on a live session, though, the denial costs nothing
+  observable: a full hook round-trip is ~30ms with or without the grant, because
+  zellij releases the pipe by itself once a plugin has handled the message. The
+  unblock call is a defensive belt (inherited from zj-radar) over a host that
+  already unblocks; requesting the permission makes it a real belt instead of a
+  denied no-op flooding the log. It is *not* what stands between us and the
+  `EMFILE` failure — the hook's own watchdog is.
+  `unblocking_a_cli_pipe_is_covered_by_a_requested_permission` ties the effect to
+  the grant so the two cannot drift apart again.
+- Still unexplained: `Action CliPipe did not complete within 1s timeout` keeps
+  appearing server-side even with the grant in place and the client returning in
+  ~30ms. It has no measured effect on hook latency, so it is recorded here rather
+  than chased.
 - Desktop notifications / bell are out of scope for v1; they are orthogonal to
   the plugin and can be added to the hook later, opt-in, without touching the
   Rust.
