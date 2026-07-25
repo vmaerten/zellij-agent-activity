@@ -20,6 +20,7 @@ Gemini CLI, opencode) are a hook script away.
   <a href="#install">Install</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#activity-reference">Activity reference</a> ·
+  <a href="#debugging">Debugging</a> ·
   <a href="#how-is-this-different">How is this different?</a>
 </p>
 
@@ -100,7 +101,7 @@ load_plugins {
 ```
 
 Restart Zellij and **grant the plugin's permissions** when prompted
-(`ReadApplicationState`, `MessageAndLaunchOtherPlugins`, `RunCommands`). On that grant the plugin
+(`ReadApplicationState`, `MessageAndLaunchOtherPlugins`, `ReadCliPipes`, `RunCommands`). On that grant the plugin
 **auto-installs its Claude Code hook** into `~/.claude/settings.json` (idempotent, backed up to
 `.bak`, and it never touches your other hooks). Start a **new** Claude session — Claude reads its
 hooks at launch — and the tab prefix comes alive.
@@ -126,6 +127,30 @@ A plugin is the only thing that can see both the tab list and the pane manifest,
 reporting `pane_id` to a stable `tab_id` is the one job a shell hook can't do — that's what this
 plugin adds. Everything else (the symbol, the wrapping, the name) is delegated to the namer.
 
+### The wire format
+
+Everything between a harness and the plugin goes through one `zellij pipe`, and this is the whole
+contract — enough to write a producer for any other agent:
+
+| arg | meaning |
+|---|---|
+| `pane_id` | `$ZELLIJ_PANE_ID` of the pane the agent runs in — required |
+| `hook_event` | normalized event name (`SessionStart`, `PreToolUse`, `Stop`, …) — required |
+| `tool_name` | tool being invoked, for `PreToolUse` |
+| `ts_ms` | send time in ms, so events racing through parallel hooks stay ordered |
+| `notification` | for `Notification` only: `permission` (needs the user) or `idle` (just a nudge) |
+
+```sh
+zellij pipe --name agent_activity --args "pane_id=3,hook_event=PreToolUse,tool_name=Bash,ts_ms=…"
+```
+
+**The producer normalizes, the plugin decides.** Each harness words things differently — Claude says
+"Claude needs your permission", opencode raises `permission.asked` — so translating that into the
+values above is the producer's job, and the plugin stays free of any harness vocabulary. Which is why
+adding a harness is writing a script, not changing the wasm. Unknown values degrade safely: an
+unrecognized `hook_event` leaves the pane alone, an unknown `tool_name` renders `⚙`, and anything
+unexpected in `notification` counts as needing the user rather than silently dropping a `⚠`.
+
 Cleanup is purely event-driven: a pane's state clears on `SessionEnd` and is garbage-collected
 when the pane closes. No timers, no wakeups. A crash leaves a stale prefix that self-heals on the
 next prompt.
@@ -141,16 +166,81 @@ Design decisions are recorded as ADRs in [`docs/adr/`](docs/adr).
 | `PreToolUse` · `Bash` | running a command | `⚡` |
 | `PreToolUse` · `Edit` / `Write` / `MultiEdit` | editing | `✎` |
 | `PreToolUse` · `Read` / `Glob` / `Grep` | reading | `◉` |
-| `PreToolUse` · `Task` | subagent | `⊜` |
+| `PreToolUse` · `Agent` / `Task` | subagent | `⊜` |
 | `PreToolUse` · `WebSearch` / `WebFetch` | web | `◈` |
 | `PreToolUse` · other / MCP | tool | `⚙` |
-| `Notification` | **needs you** (permission / idle) | `⚠` |
-| `Stop`, `SubagentStop` | done | `✓` |
+| `Notification` · permission prompt | **needs you** | `⚠` |
+| `Notification` · idle nudge, turn finished | — (keeps `✓`, see below) | |
+| `Notification` · idle nudge, mid-turn | **needs you** (it asked you something) | `⚠` |
+| `Stop` | done | `✓` |
+| `SubagentStop` | — (ignored, see below) | |
 | `SessionEnd` | — (clears the prefix) | |
 
 When a tab holds several Claude panes, the highest-priority state wins
 (`⚠ waiting > tool > ● thinking > ◆ init > ✓ done`) — a pending permission request is never
 hidden behind a background pane's activity.
+
+**`⚠` means "blocked", never "finished".** Claude fires `Notification` for two different things: a
+permission prompt, and an *idle nudge* about a minute after it finished. Treating both as `⚠` meant
+every tab you left alone drifted to `⚠`, and the symbol stopped being worth acting on. So the hook
+tells them apart and the plugin ignores the nudge — unless the turn is still running, in which case
+Claude is genuinely blocked on you (it asked a question) and `⚠` is right.
+
+`SubagentStop` is deliberately *not* "done" either: a subagent finishing says nothing about the agent
+that owns the pane, which may well be mid-tool or blocked. Only the main agent's `Stop` ends the turn.
+See [`docs/adr/0007-producer-normalizes-core-decides.md`](docs/adr/0007-producer-normalizes-core-decides.md).
+
+## Debugging
+
+A wrong symbol on a tab has exactly two possible causes, and they need different tools: either the
+harness never fired the event you expected, or it did and the plugin decided something else. Both
+traces are opt-in and off by default.
+
+**1. What the harness fired** — point the hook at a log file, in the shell you launch Claude from:
+
+```sh
+export ZELLIJ_AGENT_ACTIVITY_LOG=~/.local/state/zellij-agent-activity/events.jsonl
+```
+
+One JSON object per event, appended as it happens:
+
+```jsonc
+{"at":"2026-07-24T20:37:16Z","ts_ms":1784925436039,"pane_id":"3","hook_event":"PreToolUse",
+ "tool":"Bash","session_id":"e14716c9…","transcript":"…/subagents/agent-a67d44….jsonl", …}
+```
+
+`transcript` tells main-agent events from subagent ones (subagents get their own transcript file),
+and `keys` lists every field the payload carried. `tool_input` is intentionally **not** logged — it
+can be large and can contain secrets.
+
+**2. What the plugin decided** — load it with `debug true` in `~/.config/zellij/config.kdl`:
+
+```kdl
+load_plugins {
+    "file:~/.config/zellij/plugins/zellij-tab-namer.wasm";
+    "file:~/.config/zellij/plugins/zellij-agent-activity.wasm" {
+        debug true
+    }
+}
+```
+
+Every pipe received, every pane→tab mapping, every event mapped, ignored or dropped (and *why*),
+and every prefix emitted goes to Zellij's own log:
+
+```sh
+tail -f "${TMPDIR:-/tmp}/zellij-$(id -u)/zellij-log/zellij.log" | grep zellij-agent-activity
+```
+
+```
+[zellij-agent-activity] pane 3 (tab 2): PreToolUse/Bash -> Tool("Bash")
+[zellij-agent-activity] tab 2: prefix -> Some("⚡ ")
+[zellij-agent-activity] pane 3 (tab 2): SubagentStop/ unmapped, state kept
+```
+
+> **After upgrading the plugin**, the hook script on disk is only rewritten when its version tag
+> changes. To force a reinstall (and re-sync the registered events in `~/.claude/settings.json`):
+> `rm ~/.config/zellij/plugins/zellij-agent-activity-hook.sh`, restart Zellij, then start a **new**
+> Claude session.
 
 ## How is this different?
 

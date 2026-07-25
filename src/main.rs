@@ -27,6 +27,17 @@ enum Effect {
     /// the Claude Code hook into `~/.claude/settings.json`.
     RunCommand(Vec<String>, BTreeMap<String, String>),
     UnblockCliPipe(String),
+    /// Diagnostic line, emitted only under `debug true`.
+    Log(String),
+}
+
+/// Queue a diagnostic line; `format!` is skipped when debug is off.
+macro_rules! trace {
+    ($state:expr, $($arg:tt)*) => {
+        if $state.debug {
+            $state.effects.push(Effect::Log(format!($($arg)*)));
+        }
+    };
 }
 
 /// What an agent is doing in a pane. Aggregated per tab by max priority so a
@@ -67,24 +78,26 @@ fn tool_symbol(name: &str) -> &'static str {
         "Bash" => "⚡",
         "Read" | "Glob" | "Grep" => "◉",
         "Edit" | "Write" | "MultiEdit" => "✎",
-        "Task" => "⊜",
+        // Claude Code calls it `Agent`; `Task` is kept for older versions.
+        "Agent" | "Task" => "⊜",
         "WebSearch" | "WebFetch" => "◈",
         _ => "⚙",
     }
 }
 
-/// Map a Claude Code hook event (+ tool name for `PreToolUse`) to an activity.
-/// `None` means "leave the pane's activity unchanged" (unknown events).
-/// `SessionEnd` is handled separately (clear). `Notification` is the event
-/// Claude fires whenever it needs the user (permission prompt or idle nudge), so
-/// it is the `Waiting` signal — not informational (ADR-0003, amended).
+/// Map a hook event (+ tool name for `PreToolUse`) to an activity. `None` means
+/// "leave the pane's activity unchanged" (unknown events). `SessionEnd` and
+/// `Notification` are handled separately in `on_activity`: both need the pane's
+/// state, which this function deliberately cannot see.
+///
+/// `SubagentStop` is unmapped on purpose — subagents don't report at all, so it
+/// says nothing about the agent that owns the pane (ADR-0007).
 fn activity_from_event(event: &str, tool: &str) -> Option<Activity> {
     Some(match event {
         "SessionStart" => Activity::Init,
         "PreToolUse" => Activity::Tool(tool.to_string()),
         "PostToolUse" | "UserPromptSubmit" => Activity::Thinking,
-        "Notification" => Activity::Waiting,
-        "Stop" | "SubagentStop" => Activity::Done,
+        "Stop" => Activity::Done,
         _ => return None,
     })
 }
@@ -106,6 +119,8 @@ struct State {
     /// pane_id → last activity send-time (ms); drops events racing in out of
     /// order through parallel hook subprocesses (ADR-0003).
     last_ts: HashMap<u32, u64>,
+    /// Emit `Effect::Log` diagnostics — set from the `debug` plugin config key.
+    debug: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -117,8 +132,8 @@ register_plugin!(State);
 
 #[cfg(target_arch = "wasm32")]
 impl ZellijPlugin for State {
-    fn load(&mut self, _config: BTreeMap<String, String>) {
-        let effects = self.init();
+    fn load(&mut self, config: BTreeMap<String, String>) {
+        let effects = self.init(&config);
         self.drive(effects);
     }
 
@@ -149,6 +164,8 @@ impl State {
                     run_command(&argv, context);
                 }
                 Effect::UnblockCliPipe(id) => unblock_cli_pipe_input(&id),
+                // stdout is the render surface; zellij logs plugin stderr.
+                Effect::Log(line) => eprintln!("[zellij-agent-activity] {line}"),
                 Effect::ShowActivity { tab_id, prefix } => {
                     let mut args = BTreeMap::new();
                     args.insert("tab_id".to_string(), tab_id.to_string());
@@ -171,10 +188,14 @@ impl State {
 // ─── Core: pure state machine, events in → effects out, host-free ───────────
 
 impl State {
-    fn init(&mut self) -> Vec<Effect> {
+    fn init(&mut self, config: &BTreeMap<String, String>) -> Vec<Effect> {
+        self.debug = matches!(config.get("debug").map(String::as_str), Some("true" | "1"));
+        trace!(self, "debug tracing on (config: {config:?})");
         self.effects.push(Effect::RequestPermissions(vec![
             PermissionType::ReadApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
+            // Covers `unblock_cli_pipe_input` (ADR-0003).
+            PermissionType::ReadCliPipes,
             PermissionType::RunCommands,
         ]));
         self.effects.push(Effect::Subscribe(vec![
@@ -202,6 +223,7 @@ impl State {
     }
 
     fn handle_pipe(&mut self, message: PipeMessage) -> Vec<Effect> {
+        trace!(self, "pipe '{}' args={:?}", message.name, message.args);
         if let PipeSource::Cli(pipe_id) = &message.source {
             // The hook's `zellij pipe` blocks until we unblock it.
             self.effects.push(Effect::UnblockCliPipe(pipe_id.clone()));
@@ -214,28 +236,72 @@ impl State {
 
     fn on_activity(&mut self, args: &BTreeMap<String, String>) {
         let Some(pane_id) = args.get("pane_id").and_then(|s| s.parse::<u32>().ok()) else {
+            trace!(self, "drop: no usable pane_id in {args:?}");
             return;
         };
         // Ordering: a stale event never overwrites a newer one for this pane.
         if let Some(ts) = args.get("ts_ms").and_then(|s| s.parse::<u64>().ok()) {
-            if self.last_ts.get(&pane_id).is_some_and(|&last| ts < last) {
-                return;
+            if let Some(&last) = self.last_ts.get(&pane_id) {
+                if ts < last {
+                    trace!(self, "pane {pane_id}: drop, stale ts {ts} < {last}");
+                    return;
+                }
             }
             self.last_ts.insert(pane_id, ts);
         }
         let Some(&tab_id) = self.pane_to_tab.get(&pane_id) else {
-            return; // pane not mapped yet — Claude events arrive long after load
+            // pane not mapped yet — Claude events arrive long after load
+            trace!(self, "pane {pane_id}: drop, not mapped to a tab yet");
+            return;
         };
         let event = args.get("hook_event").map(|s| s.as_str()).unwrap_or("");
         if event == "SessionEnd" {
+            trace!(self, "pane {pane_id} (tab {tab_id}): SessionEnd -> cleared");
             self.pane_activity.remove(&pane_id);
             self.recompute_tab(tab_id);
             return;
         }
-        let tool = args.get("tool_name").map(|s| s.as_str()).unwrap_or("");
-        if let Some(activity) = activity_from_event(event, tool) {
-            self.pane_activity.insert(pane_id, activity);
+        if event == "Notification" {
+            // An idle nudge once the turn has ended asks for nothing — `Stop`
+            // already put ✓ there, which is the right state. Arriving *while* the
+            // turn runs it means the agent is blocked on the user (a question),
+            // which is a real ⚠. `Done` is produced by `Stop` alone and any later
+            // event overwrites it, so the pane's own activity already *is* the
+            // "turn has ended" flag — no second state to keep in sync.
+            //
+            // Any other kind, including one missing or unknown from an older or
+            // newer producer, counts as needing the user: a wire change must never
+            // silently lose the signal (ADR-0006 tolerance, ADR-0007).
+            let idle = args.get("notification").is_some_and(|kind| kind == "idle");
+            if idle && self.pane_activity.get(&pane_id) == Some(&Activity::Done) {
+                trace!(
+                    self,
+                    "pane {pane_id} (tab {tab_id}): idle nudge, turn already done -> ignored"
+                );
+                return;
+            }
+            trace!(
+                self,
+                "pane {pane_id} (tab {tab_id}): Notification -> Waiting"
+            );
+            self.pane_activity.insert(pane_id, Activity::Waiting);
             self.recompute_tab(tab_id);
+            return;
+        }
+        let tool = args.get("tool_name").map(|s| s.as_str()).unwrap_or("");
+        match activity_from_event(event, tool) {
+            Some(activity) => {
+                trace!(
+                    self,
+                    "pane {pane_id} (tab {tab_id}): {event}/{tool} -> {activity:?}"
+                );
+                self.pane_activity.insert(pane_id, activity);
+                self.recompute_tab(tab_id);
+            }
+            None => trace!(
+                self,
+                "pane {pane_id} (tab {tab_id}): {event}/{tool} unmapped, state kept"
+            ),
         }
     }
 
@@ -244,6 +310,7 @@ impl State {
         let alive: HashSet<usize> = tabs.iter().map(|t| t.tab_id).collect();
         self.shown.retain(|id, _| alive.contains(id));
         self.rebuild_pane_to_tab();
+        trace!(self, "tabs: position->tab_id {:?}", self.tab_id_by_pos);
         self.recompute_all();
     }
 
@@ -264,6 +331,7 @@ impl State {
         self.pane_activity.retain(|id, _| alive.contains(id));
         self.last_ts.retain(|id, _| alive.contains(id));
         self.rebuild_pane_to_tab();
+        trace!(self, "panes: pane_id->tab_id {:?}", self.pane_to_tab);
         self.recompute_all();
     }
 
@@ -307,6 +375,7 @@ impl State {
                 self.shown.remove(&tab_id);
             }
         }
+        trace!(self, "tab {tab_id}: prefix -> {desired:?}");
         self.effects.push(Effect::ShowActivity {
             tab_id,
             prefix: desired,
@@ -380,16 +449,27 @@ mod tests {
             .collect()
     }
 
+    fn log_lines(effects: &[Effect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Log(line) => Some(line.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn init_requests_permissions_and_subscribes() {
         let mut state = State::default();
-        let effects = state.init();
+        let effects = state.init(&BTreeMap::new());
         assert_eq!(
             effects,
             vec![
                 Effect::RequestPermissions(vec![
                     PermissionType::ReadApplicationState,
                     PermissionType::MessageAndLaunchOtherPlugins,
+                    PermissionType::ReadCliPipes,
                     PermissionType::RunCommands,
                 ]),
                 Effect::Subscribe(vec![
@@ -398,6 +478,32 @@ mod tests {
                     EventType::PermissionRequestResult,
                 ]),
             ]
+        );
+    }
+
+    #[test]
+    fn unblocking_a_cli_pipe_is_covered_by_a_requested_permission() {
+        let mut state = State::default();
+        let requested = match state.init(&BTreeMap::new()).first() {
+            Some(Effect::RequestPermissions(perms)) => perms.clone(),
+            other => panic!("init must request permissions first, got {other:?}"),
+        };
+        let effects = state.handle_pipe(PipeMessage {
+            source: PipeSource::Cli("pipe-1".to_string()),
+            name: PIPE_NAME.to_string(),
+            payload: None,
+            args: BTreeMap::new(),
+            is_private: false,
+        });
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::UnblockCliPipe(_))),
+            "a CLI pipe must be unblocked, got {effects:?}"
+        );
+        assert!(
+            requested.contains(&PermissionType::ReadCliPipes),
+            "…so ReadCliPipes must be requested, got {requested:?}"
         );
     }
 
@@ -670,6 +776,181 @@ mod tests {
     }
 
     #[test]
+    fn idle_nudge_after_a_finished_turn_is_ignored() {
+        // The bug this fixes: ~60s after finishing, Claude fires `Notification`
+        // to reclaim attention, which flipped the tab from ✓ back to ⚠ — so every
+        // idle tab ended up shouting "come here" and the symbol meant nothing.
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("notification", "idle"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![]);
+        assert_eq!(state.shown.get(&1), Some(&"✓ ".to_string()));
+    }
+
+    #[test]
+    fn idle_nudge_mid_turn_still_warns() {
+        // Same nudge, but the turn is still running: the agent is blocked on the
+        // user (a question), so this one must show ⚠.
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("notification", "idle"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![(1, Some("⚠ ".to_string()))]);
+    }
+
+    #[test]
+    fn a_new_prompt_rearms_the_idle_nudge() {
+        // A finished turn followed by a new prompt: the pane is working again, so
+        // a nudge is once more a real "blocked on you".
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "UserPromptSubmit"),
+        ]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("notification", "idle"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![(1, Some("⚠ ".to_string()))]);
+    }
+
+    #[test]
+    fn a_permission_notification_always_warns() {
+        // Even on a finished turn — a permission prompt can only mean the user is
+        // needed, whatever came before.
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("notification", "permission"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![(1, Some("⚠ ".to_string()))]);
+    }
+
+    #[test]
+    fn an_absent_or_unknown_notification_kind_warns() {
+        // Tolerance in the safe direction (ADR-0006): a producer too old to send
+        // the field, or one sending a kind we don't know, must never downgrade a
+        // real "come unblock me" into silence.
+        for kind in [None, Some("something-new")] {
+            let mut state = ready_state();
+            state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+            let mut args = vec![("pane_id", "10"), ("hook_event", "Notification")];
+            if let Some(kind) = kind {
+                args.push(("notification", kind));
+            }
+            let effects = state.handle_pipe(activity_pipe(&args));
+            assert_eq!(
+                show_effects(&effects),
+                vec![(1, Some("⚠ ".to_string()))],
+                "notification kind {kind:?} must still warn"
+            );
+        }
+    }
+
+    #[test]
+    fn subagent_stop_never_flips_a_waiting_pane_to_done() {
+        // The live incident that motivated this (ADR-0003).
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+            ("ts_ms", "1000"),
+        ]));
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("ts_ms", "2000"),
+        ]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "SubagentStop"),
+            ("ts_ms", "3000"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![]);
+        assert_eq!(state.shown.get(&1), Some(&"⚠ ".to_string()));
+    }
+
+    #[test]
+    fn stop_alone_marks_the_pane_done() {
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+        ]));
+        let effects =
+            state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        assert_eq!(show_effects(&effects), vec![(1, Some("✓ ".to_string()))]);
+    }
+
+    #[test]
+    fn debug_off_emits_no_log_effects() {
+        let mut state = State::default();
+        let mut effects = state.init(&BTreeMap::new());
+        effects.extend(state.handle(Event::TabUpdate(vec![tab(1, 0, true)])));
+        effects.extend(state.handle(Event::PaneUpdate(manifest(&[(0, &[10])]))));
+        effects.extend(state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ])));
+        assert_eq!(log_lines(&effects), Vec::<String>::new());
+    }
+
+    #[test]
+    fn debug_on_traces_the_whole_decision_path() {
+        let mut state = State::default();
+        state.init(&BTreeMap::from([("debug".to_string(), "true".to_string())]));
+        state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
+        state.handle(Event::PaneUpdate(manifest(&[(0, &[10])])));
+
+        let acted = log_lines(&state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ])));
+        assert!(
+            acted.iter().any(|l| l.contains("PreToolUse/Bash -> Tool"))
+                && acted.iter().any(|l| l.contains("tab 1: prefix -> Some")),
+            "must trace the mapping and the emission, got {acted:?}"
+        );
+
+        let ignored = log_lines(&state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "SubagentStop"),
+        ])));
+        assert!(
+            ignored.iter().any(|l| l.contains("unmapped, state kept")),
+            "must trace the ignored event, got {ignored:?}"
+        );
+
+        let dropped = log_lines(
+            &state.handle_pipe(activity_pipe(&[("pane_id", "777"), ("hook_event", "Stop")])),
+        );
+        assert!(
+            dropped
+                .iter()
+                .any(|l| l.contains("not mapped to a tab yet")),
+            "must trace the drop reason, got {dropped:?}"
+        );
+    }
+
+    #[test]
     fn tool_symbol_table() {
         assert_eq!(tool_symbol("Bash"), "⚡");
         assert_eq!(tool_symbol("Read"), "◉");
@@ -678,6 +959,7 @@ mod tests {
         assert_eq!(tool_symbol("Edit"), "✎");
         assert_eq!(tool_symbol("Write"), "✎");
         assert_eq!(tool_symbol("MultiEdit"), "✎");
+        assert_eq!(tool_symbol("Agent"), "⊜");
         assert_eq!(tool_symbol("Task"), "⊜");
         assert_eq!(tool_symbol("WebSearch"), "◈");
         assert_eq!(tool_symbol("WebFetch"), "◈");

@@ -37,6 +37,13 @@ jobs:
           rustflags: ""
       - run: cargo clippy --all-targets -- -D warnings
 
+  producer:
+    name: producer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/test-hook.sh
+
   test:
     name: test
     runs-on: ubuntu-latest
