@@ -21,12 +21,8 @@ INPUT=$(cat)
 HOOK_EVENT=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty')
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')
 
-# Opt-in trace of what the harness actually fired, and in what order — the one
-# thing you cannot reconstruct after the fact when the tab shows a wrong symbol.
-# Off (and free) unless ZELLIJ_AGENT_ACTIVITY_LOG names a file. Fields are picked,
-# not dumped: `tool_input` can be huge and can carry secrets, and short lines keep
-# the O_APPEND write atomic when parallel hook subprocesses log at once. `keys`
-# still surfaces any field the harness has that we don't map yet.
+# Fields are picked, not dumped: `tool_input` can hold secrets, and short lines
+# keep the append atomic across parallel hook subprocesses.
 if [ -n "$ZELLIJ_AGENT_ACTIVITY_LOG" ]; then
   mkdir -p "$(dirname "$ZELLIJ_AGENT_ACTIVITY_LOG")" 2>/dev/null
   printf '%s' "$INPUT" | jq -c --argjson ts "$TS_MS" --arg pane "$ZELLIJ_PANE_ID" '{
