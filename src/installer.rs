@@ -89,8 +89,7 @@ jq '
 ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
 
 # Register only the events the plugin consumes (fewer forked hook subprocesses).
-# `SubagentStop` is deliberately absent: subagents share the main agent's pane, so
-# one finishing is not a pane-level "done" (see activity_from_event).
+# `SubagentStop` is absent on purpose — see activity_from_event.
 EVENTS='["SessionStart","PreToolUse","PostToolUse","UserPromptSubmit","Notification","Stop","SessionEnd"]'
 ENTRY=$(jq -nc --arg cmd "$HOOK_CMD" '[{"hooks": [{"type": "command", "command": $cmd, "timeout": 5, "async": true}]}]')
 tmp=$(mktemp)

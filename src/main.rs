@@ -27,14 +27,11 @@ enum Effect {
     /// the Claude Code hook into `~/.claude/settings.json`.
     RunCommand(Vec<String>, BTreeMap<String, String>),
     UnblockCliPipe(String),
-    /// A diagnostic line. Only ever emitted when the plugin is loaded with
-    /// `debug true`; the adapter writes it to stderr, which zellij captures in
-    /// its log. Being an effect keeps the tracing testable and host-free.
+    /// Diagnostic line, emitted only under `debug true`.
     Log(String),
 }
 
-/// Queue a diagnostic line. Costs a bool check when debug is off — the `format!`
-/// is never evaluated, so instrumentation can be liberal.
+/// Queue a diagnostic line; `format!` is skipped when debug is off.
 macro_rules! trace {
     ($state:expr, $($arg:tt)*) => {
         if $state.debug {
@@ -93,10 +90,7 @@ fn tool_symbol(name: &str) -> &'static str {
 /// Claude fires whenever it needs the user (permission prompt or idle nudge), so
 /// it is the `Waiting` signal — not informational (ADR-0003, amended).
 ///
-/// `SubagentStop` maps to nothing on purpose: a `Task` subagent finishing says
-/// nothing about the main agent, which shares the same pane and may well be
-/// mid-tool or blocked on a permission prompt. Treating it as `Done` flipped the
-/// tab to `✓` while Claude was in fact waiting on the user (ADR-0003, amended).
+/// `SubagentStop` is unmapped on purpose — subagents share the pane (ADR-0003).
 fn activity_from_event(event: &str, tool: &str) -> Option<Activity> {
     Some(match event {
         "SessionStart" => Activity::Init,
@@ -170,8 +164,7 @@ impl State {
                     run_command(&argv, context);
                 }
                 Effect::UnblockCliPipe(id) => unblock_cli_pipe_input(&id),
-                // Plugin stdout is the render surface, so diagnostics go to
-                // stderr — zellij funnels it into its own log file.
+                // stdout is the render surface; zellij logs plugin stderr.
                 Effect::Log(line) => eprintln!("[zellij-agent-activity] {line}"),
                 Effect::ShowActivity { tab_id, prefix } => {
                     let mut args = BTreeMap::new();
@@ -201,6 +194,8 @@ impl State {
         self.effects.push(Effect::RequestPermissions(vec![
             PermissionType::ReadApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
+            // Covers `unblock_cli_pipe_input` (ADR-0003).
+            PermissionType::ReadCliPipes,
             PermissionType::RunCommands,
         ]));
         self.effects.push(Effect::Subscribe(vec![
@@ -276,8 +271,6 @@ impl State {
                 self.pane_activity.insert(pane_id, activity);
                 self.recompute_tab(tab_id);
             }
-            // Unmapped events (`SubagentStop`, anything Claude adds later) leave
-            // the pane as it was — this is the branch that must NOT flip to ✓.
             None => trace!(
                 self,
                 "pane {pane_id} (tab {tab_id}): {event}/{tool} unmapped, state kept"
@@ -449,6 +442,7 @@ mod tests {
                 Effect::RequestPermissions(vec![
                     PermissionType::ReadApplicationState,
                     PermissionType::MessageAndLaunchOtherPlugins,
+                    PermissionType::ReadCliPipes,
                     PermissionType::RunCommands,
                 ]),
                 Effect::Subscribe(vec![
@@ -457,6 +451,32 @@ mod tests {
                     EventType::PermissionRequestResult,
                 ]),
             ]
+        );
+    }
+
+    #[test]
+    fn unblocking_a_cli_pipe_is_covered_by_a_requested_permission() {
+        let mut state = State::default();
+        let requested = match state.init(&BTreeMap::new()).first() {
+            Some(Effect::RequestPermissions(perms)) => perms.clone(),
+            other => panic!("init must request permissions first, got {other:?}"),
+        };
+        let effects = state.handle_pipe(PipeMessage {
+            source: PipeSource::Cli("pipe-1".to_string()),
+            name: PIPE_NAME.to_string(),
+            payload: None,
+            args: BTreeMap::new(),
+            is_private: false,
+        });
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::UnblockCliPipe(_))),
+            "a CLI pipe must be unblocked, got {effects:?}"
+        );
+        assert!(
+            requested.contains(&PermissionType::ReadCliPipes),
+            "…so ReadCliPipes must be requested, got {requested:?}"
         );
     }
 
@@ -730,11 +750,7 @@ mod tests {
 
     #[test]
     fn subagent_stop_never_flips_a_waiting_pane_to_done() {
-        // The live incident this guards against: the main agent was blocked on a
-        // permission prompt (`Notification` → ⚠) while two `Task` subagents were
-        // still running *in the same pane*. Each one finishing fired
-        // `SubagentStop`, which used to mean `Done` — so the tab showed ✓ while
-        // Claude was in fact waiting on the user.
+        // The live incident that motivated this (ADR-0003).
         let mut state = ready_state();
         state.handle_pipe(activity_pipe(&[
             ("pane_id", "10"),
@@ -758,7 +774,6 @@ mod tests {
 
     #[test]
     fn stop_alone_marks_the_pane_done() {
-        // The counterpart: only the *main* agent's `Stop` ends the turn.
         let mut state = ready_state();
         state.handle_pipe(activity_pipe(&[
             ("pane_id", "10"),
@@ -790,7 +805,6 @@ mod tests {
         state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10])])));
 
-        // An event the plugin acts on: received, mapped, and emitted.
         let acted = log_lines(&state.handle_pipe(activity_pipe(&[
             ("pane_id", "10"),
             ("hook_event", "PreToolUse"),
@@ -802,8 +816,6 @@ mod tests {
             "must trace the mapping and the emission, got {acted:?}"
         );
 
-        // An event it deliberately ignores must say so rather than go silent —
-        // that silence is what made the ✓ bug invisible.
         let ignored = log_lines(&state.handle_pipe(activity_pipe(&[
             ("pane_id", "10"),
             ("hook_event", "SubagentStop"),
@@ -813,7 +825,6 @@ mod tests {
             "must trace the ignored event, got {ignored:?}"
         );
 
-        // And a dropped one must name the reason.
         let dropped = log_lines(
             &state.handle_pipe(activity_pipe(&[("pane_id", "777"), ("hook_event", "Stop")])),
         );
