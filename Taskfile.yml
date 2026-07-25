@@ -65,6 +65,16 @@ tasks:
       - mise exec -- git-cliff --tag v{{.NEW}} -o CHANGELOG.md
       - 'echo "CHANGELOG.md regenerated for v{{.NEW}}"'
 
+  release-notes:
+    desc: 'Preview the GitHub Release body. Usage: task release-notes [TAG=v0.2.0]'
+    vars:
+      # Defaults to the version in Cargo.toml — i.e. the release about to be cut.
+      TAG: '{{.TAG | default (printf "v%s" .CURRENT)}}'
+    cmds:
+      # Same script the Release workflow runs, so this *is* the published body.
+      - ./scripts/release-notes.sh {{.TAG}}
+    silent: true
+
   release:
     desc: 'Bump, changelog, CI, commit, tag and push. Prompts for NEW if omitted. Usage: task release [NEW=0.2.0]'
     requires:
@@ -83,6 +93,10 @@ tasks:
         vars: { NEW: '{{.NEW}}' }
       - task: changelog
         vars: { NEW: '{{.NEW}}' }
+      # Renders what the workflow will publish — a broken template or a missing
+      # changelog section fails here, before the tag exists.
+      - task: release-notes
+        vars: { TAG: 'v{{.NEW}}' }
       - task: ci
       - git add Cargo.toml Cargo.lock CHANGELOG.md
       - "git commit -m '🔖 chore: release v{{.NEW}}'"

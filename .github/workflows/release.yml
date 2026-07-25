@@ -41,45 +41,16 @@ jobs:
       # CHANGELOG.md is the source of truth: it is generated and committed by
       # `task release` before the tag, so the Release body is extracted from it
       # rather than regenerated — no git-cliff in CI, and the two can't diverge.
-      # The prose lives in .github/release-notes.md.tmpl; this step only fills
-      # in the placeholders, so editing the notes never means editing shell.
+      # The rendering lives in the script so `task release-notes` previews the
+      # exact body this step publishes.
       - name: Assemble release notes
         env:
-          TAG: ${{ github.ref_name }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
-          ver="${TAG#v}"
-
-          # The Zellij compat floor is derived from the lockfile, never hardcoded.
-          zt="$(grep -A2 'name = "zellij-tile"' Cargo.lock \
-            | grep version | head -n1 | cut -d'"' -f2)"
-
-          awk -v ver="$ver" '
-            $0 ~ "^## \\[" ver "\\]" {found=1; next}
-            found && (/^## \[/ || /^\[[^]]+\]: /) {exit}
-            found {print}
-          ' CHANGELOG.md > changes.md
-
-          if [ -z "$(tr -d '[:space:]' < changes.md)" ]; then
-            echo "::error::CHANGELOG.md has no section for $ver — run 'task changelog NEW=$ver'"
+          if ! scripts/release-notes.sh "$GITHUB_REF_NAME" > RELEASE_NOTES.md; then
+            echo "::error::could not assemble the release notes (see the log above)"
             exit 1
           fi
-
-          # `r` queues the file, `d` drops the placeholder line: the classic
-          # sed include. `|` as delimiter keeps the URLs slash-safe.
-          sed -e "s|{{ZELLIJ_TILE}}|$zt|g" \
-              -e "s|{{REPO_URL}}|$REPO_URL|g" \
-              -e "s|{{TAG}}|$TAG|g" \
-              -e "/{{CHANGES}}/r changes.md" \
-              -e "/{{CHANGES}}/d" \
-              .github/release-notes.md.tmpl > RELEASE_NOTES.md
-
-          if grep -q '{{' RELEASE_NOTES.md; then
-            echo "::error::unsubstituted placeholder left in the release notes"
-            grep -n '{{' RELEASE_NOTES.md
-            exit 1
-          fi
-
           echo "--- release notes ---"
           cat RELEASE_NOTES.md
 
