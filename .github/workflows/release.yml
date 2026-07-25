@@ -38,11 +38,6 @@ jobs:
       - name: Build wasm
         run: cargo build --release --target wasm32-wasip1
 
-      # CHANGELOG.md is the source of truth: it is generated and committed by
-      # `task release` before the tag, so the Release body is extracted from it
-      # rather than regenerated — no git-cliff in CI, and the two can't diverge.
-      # The rendering lives in the script so `task release-notes` previews the
-      # exact body this step publishes.
       - name: Assemble release notes
         env:
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
@@ -59,6 +54,4 @@ jobs:
         with:
           files: ${{ env.WASM }}
           body_path: RELEASE_NOTES.md
-          # The curated changelog replaces GitHub's auto notes, which would list
-          # the same changes a second time.
           generate_release_notes: false
