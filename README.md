@@ -120,6 +120,30 @@ A plugin is the only thing that can see both the tab list and the pane manifest,
 reporting `pane_id` to a stable `tab_id` is the one job a shell hook can't do — that's what this
 plugin adds. Everything else (the symbol, the wrapping, the name) is delegated to the namer.
 
+### The wire format
+
+Everything between a harness and the plugin goes through one `zellij pipe`, and this is the whole
+contract — enough to write a producer for any other agent:
+
+| arg | meaning |
+|---|---|
+| `pane_id` | `$ZELLIJ_PANE_ID` of the pane the agent runs in — required |
+| `hook_event` | normalized event name (`SessionStart`, `PreToolUse`, `Stop`, …) — required |
+| `tool_name` | tool being invoked, for `PreToolUse` |
+| `ts_ms` | send time in ms, so events racing through parallel hooks stay ordered |
+| `notification` | for `Notification` only: `permission` (needs the user) or `idle` (just a nudge) |
+
+```sh
+zellij pipe --name agent_activity --args "pane_id=3,hook_event=PreToolUse,tool_name=Bash,ts_ms=…"
+```
+
+**The producer normalizes, the plugin decides.** Each harness words things differently — Claude says
+"Claude needs your permission", opencode raises `permission.asked` — so translating that into the
+values above is the producer's job, and the plugin stays free of any harness vocabulary. Which is why
+adding a harness is writing a script, not changing the wasm. Unknown values degrade safely: an
+unrecognized `hook_event` leaves the pane alone, an unknown `tool_name` renders `⚙`, and anything
+unexpected in `notification` counts as needing the user rather than silently dropping a `⚠`.
+
 Cleanup is purely event-driven: a pane's state clears on `SessionEnd` and is garbage-collected
 when the pane closes. No timers, no wakeups. A crash leaves a stale prefix that self-heals on the
 next prompt.
@@ -135,10 +159,12 @@ Design decisions are recorded as ADRs in [`docs/adr/`](docs/adr).
 | `PreToolUse` · `Bash` | running a command | `⚡` |
 | `PreToolUse` · `Edit` / `Write` / `MultiEdit` | editing | `✎` |
 | `PreToolUse` · `Read` / `Glob` / `Grep` | reading | `◉` |
-| `PreToolUse` · `Task` | subagent | `⊜` |
+| `PreToolUse` · `Agent` / `Task` | subagent | `⊜` |
 | `PreToolUse` · `WebSearch` / `WebFetch` | web | `◈` |
 | `PreToolUse` · other / MCP | tool | `⚙` |
-| `Notification` | **needs you** (permission / idle) | `⚠` |
+| `Notification` · permission prompt | **needs you** | `⚠` |
+| `Notification` · idle nudge, turn finished | — (keeps `✓`, see below) | |
+| `Notification` · idle nudge, mid-turn | **needs you** (it asked you something) | `⚠` |
 | `Stop` | done | `✓` |
 | `SubagentStop` | — (ignored, see below) | |
 | `SessionEnd` | — (clears the prefix) | |
@@ -147,9 +173,15 @@ When a tab holds several Claude panes, the highest-priority state wins
 (`⚠ waiting > tool > ● thinking > ◆ init > ✓ done`) — a pending permission request is never
 hidden behind a background pane's activity.
 
-`SubagentStop` is deliberately *not* "done": `Task` subagents run inside the **main agent's pane**,
-so one of them finishing tells you nothing about the agent that owns the pane — which may well be
-mid-tool, or blocked on a permission prompt. Only the main agent's `Stop` ends the turn.
+**`⚠` means "blocked", never "finished".** Claude fires `Notification` for two different things: a
+permission prompt, and an *idle nudge* about a minute after it finished. Treating both as `⚠` meant
+every tab you left alone drifted to `⚠`, and the symbol stopped being worth acting on. So the hook
+tells them apart and the plugin ignores the nudge — unless the turn is still running, in which case
+Claude is genuinely blocked on you (it asked a question) and `⚠` is right.
+
+`SubagentStop` is deliberately *not* "done" either: a subagent finishing says nothing about the agent
+that owns the pane, which may well be mid-tool or blocked. Only the main agent's `Stop` ends the turn.
+See [`docs/adr/0007-producer-normalizes-core-decides.md`](docs/adr/0007-producer-normalizes-core-decides.md).
 
 ## Debugging
 

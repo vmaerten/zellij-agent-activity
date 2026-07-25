@@ -26,10 +26,12 @@ tasks:
       - 'echo "-> {{.WASM}}"'
 
   ci:
-    desc: Run the exact checks CI runs (fmt, clippy, test, wasm build).
+    desc: Run the exact checks CI runs (fmt, clippy, producer tests, test, wasm build).
     cmds:
       - cargo fmt --all --check
       - cargo clippy --all-targets -- -D warnings
+      # The forwarder's normalization is the only logic outside cargo test.
+      - bash scripts/test-hook.sh
       - cargo test
       - cargo build --release --target wasm32-wasip1
 

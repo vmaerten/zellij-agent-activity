@@ -78,25 +78,25 @@ fn tool_symbol(name: &str) -> &'static str {
         "Bash" => "⚡",
         "Read" | "Glob" | "Grep" => "◉",
         "Edit" | "Write" | "MultiEdit" => "✎",
-        "Task" => "⊜",
+        // Claude Code calls it `Agent`; `Task` is kept for older versions.
+        "Agent" | "Task" => "⊜",
         "WebSearch" | "WebFetch" => "◈",
         _ => "⚙",
     }
 }
 
-/// Map a Claude Code hook event (+ tool name for `PreToolUse`) to an activity.
-/// `None` means "leave the pane's activity unchanged" (unknown events).
-/// `SessionEnd` is handled separately (clear). `Notification` is the event
-/// Claude fires whenever it needs the user (permission prompt or idle nudge), so
-/// it is the `Waiting` signal — not informational (ADR-0003, amended).
+/// Map a hook event (+ tool name for `PreToolUse`) to an activity. `None` means
+/// "leave the pane's activity unchanged" (unknown events). `SessionEnd` and
+/// `Notification` are handled separately in `on_activity`: both need the pane's
+/// state, which this function deliberately cannot see.
 ///
-/// `SubagentStop` is unmapped on purpose — subagents share the pane (ADR-0003).
+/// `SubagentStop` is unmapped on purpose — subagents don't report at all, so it
+/// says nothing about the agent that owns the pane (ADR-0007).
 fn activity_from_event(event: &str, tool: &str) -> Option<Activity> {
     Some(match event {
         "SessionStart" => Activity::Init,
         "PreToolUse" => Activity::Tool(tool.to_string()),
         "PostToolUse" | "UserPromptSubmit" => Activity::Thinking,
-        "Notification" => Activity::Waiting,
         "Stop" => Activity::Done,
         _ => return None,
     })
@@ -258,6 +258,33 @@ impl State {
         if event == "SessionEnd" {
             trace!(self, "pane {pane_id} (tab {tab_id}): SessionEnd -> cleared");
             self.pane_activity.remove(&pane_id);
+            self.recompute_tab(tab_id);
+            return;
+        }
+        if event == "Notification" {
+            // An idle nudge once the turn has ended asks for nothing — `Stop`
+            // already put ✓ there, which is the right state. Arriving *while* the
+            // turn runs it means the agent is blocked on the user (a question),
+            // which is a real ⚠. `Done` is produced by `Stop` alone and any later
+            // event overwrites it, so the pane's own activity already *is* the
+            // "turn has ended" flag — no second state to keep in sync.
+            //
+            // Any other kind, including one missing or unknown from an older or
+            // newer producer, counts as needing the user: a wire change must never
+            // silently lose the signal (ADR-0006 tolerance, ADR-0007).
+            let idle = args.get("notification").is_some_and(|kind| kind == "idle");
+            if idle && self.pane_activity.get(&pane_id) == Some(&Activity::Done) {
+                trace!(
+                    self,
+                    "pane {pane_id} (tab {tab_id}): idle nudge, turn already done -> ignored"
+                );
+                return;
+            }
+            trace!(
+                self,
+                "pane {pane_id} (tab {tab_id}): Notification -> Waiting"
+            );
+            self.pane_activity.insert(pane_id, Activity::Waiting);
             self.recompute_tab(tab_id);
             return;
         }
@@ -749,6 +776,93 @@ mod tests {
     }
 
     #[test]
+    fn idle_nudge_after_a_finished_turn_is_ignored() {
+        // The bug this fixes: ~60s after finishing, Claude fires `Notification`
+        // to reclaim attention, which flipped the tab from ✓ back to ⚠ — so every
+        // idle tab ended up shouting "come here" and the symbol meant nothing.
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("notification", "idle"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![]);
+        assert_eq!(state.shown.get(&1), Some(&"✓ ".to_string()));
+    }
+
+    #[test]
+    fn idle_nudge_mid_turn_still_warns() {
+        // Same nudge, but the turn is still running: the agent is blocked on the
+        // user (a question), so this one must show ⚠.
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("notification", "idle"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![(1, Some("⚠ ".to_string()))]);
+    }
+
+    #[test]
+    fn a_new_prompt_rearms_the_idle_nudge() {
+        // A finished turn followed by a new prompt: the pane is working again, so
+        // a nudge is once more a real "blocked on you".
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "UserPromptSubmit"),
+        ]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("notification", "idle"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![(1, Some("⚠ ".to_string()))]);
+    }
+
+    #[test]
+    fn a_permission_notification_always_warns() {
+        // Even on a finished turn — a permission prompt can only mean the user is
+        // needed, whatever came before.
+        let mut state = ready_state();
+        state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+            ("notification", "permission"),
+        ]));
+        assert_eq!(show_effects(&effects), vec![(1, Some("⚠ ".to_string()))]);
+    }
+
+    #[test]
+    fn an_absent_or_unknown_notification_kind_warns() {
+        // Tolerance in the safe direction (ADR-0006): a producer too old to send
+        // the field, or one sending a kind we don't know, must never downgrade a
+        // real "come unblock me" into silence.
+        for kind in [None, Some("something-new")] {
+            let mut state = ready_state();
+            state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+            let mut args = vec![("pane_id", "10"), ("hook_event", "Notification")];
+            if let Some(kind) = kind {
+                args.push(("notification", kind));
+            }
+            let effects = state.handle_pipe(activity_pipe(&args));
+            assert_eq!(
+                show_effects(&effects),
+                vec![(1, Some("⚠ ".to_string()))],
+                "notification kind {kind:?} must still warn"
+            );
+        }
+    }
+
+    #[test]
     fn subagent_stop_never_flips_a_waiting_pane_to_done() {
         // The live incident that motivated this (ADR-0003).
         let mut state = ready_state();
@@ -845,6 +959,7 @@ mod tests {
         assert_eq!(tool_symbol("Edit"), "✎");
         assert_eq!(tool_symbol("Write"), "✎");
         assert_eq!(tool_symbol("MultiEdit"), "✎");
+        assert_eq!(tool_symbol("Agent"), "⊜");
         assert_eq!(tool_symbol("Task"), "⊜");
         assert_eq!(tool_symbol("WebSearch"), "◈");
         assert_eq!(tool_symbol("WebFetch"), "◈");
