@@ -66,12 +66,19 @@ No new status bar, no new column, no rename war. Your existing tab name, with a 
 
 ## Requirements
 
-- **Zellij ≥ 0.44.3** (`zellij --version`) — built against `zellij-tile 0.44.x`; a newer Zellij
-  minor may require a rebuild.
+- **Zellij ≥ 0.44.3** (`zellij --version`).
 - **[`zellij-tab-namer`](https://github.com/vmaerten/zellij-tab-namer)** loaded — this plugin
   drives it and does nothing on its own (a standalone mode is on the roadmap).
 - **`jq`** and **bash** — used by the hook that forwards Claude's events.
 - **Claude Code** — the source of the activity events.
+
+| Plugin | `zellij-tile` | Zellij tested | Pipe protocol |
+|---|---|---|---|
+| 0.1.x | 0.44.3 | 0.44.3 | `agent_activity.v1` |
+
+A plugin is wasm compiled against `zellij-tile`, and that pins the ABI the Zellij host expects —
+so a newer Zellij *minor* may require a rebuild. Full matrix, policy and migration notes:
+[`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
 
 ## Install
 

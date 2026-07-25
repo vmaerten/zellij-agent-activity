@@ -1,0 +1,16 @@
+## Compatibility
+
+Built against `zellij-tile {{ZELLIJ_TILE}}` — requires **Zellij >= {{ZELLIJ_TILE}}**.
+Full matrix and migration notes: [docs/COMPATIBILITY.md]({{REPO_URL}}/blob/{{TAG}}/docs/COMPATIBILITY.md)
+
+## Changes
+{{CHANGES}}
+
+## Install
+
+```sh
+curl -L -o ~/.config/zellij/plugins/zellij-agent-activity.wasm \
+  {{REPO_URL}}/releases/download/{{TAG}}/zellij-agent-activity.wasm
+```
+
+Load it alongside `zellij-tab-namer` in `~/.config/zellij/config.kdl` (see the README).
