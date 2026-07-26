@@ -40,7 +40,8 @@ The `⚠` "Claude needs you" state comes from the **`Notification`** hook, not a
 `PermissionRequest` event (Claude Code has no such hook; verified against the
 installed version and cross-checked with the zj-radar project). Claude fires it
 whenever it wants the user's attention — which turned out to cover two different
-situations, a permission prompt *and* an idle nudge after the turn ended. Only the
+situations, a permission prompt *and* an idle nudge after a minute without input.
+Only the
 first is worth a `⚠`; **ADR-0007 supersedes the original "every `Notification` maps
 to `Waiting`"** and splits them at the producer.
 
