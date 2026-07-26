@@ -2,7 +2,7 @@
 
 `Notification` turned out to be **two signals wearing one name**. Claude Code
 fires it both for a permission prompt — the user must act — and for an *idle
-nudge* about a minute after the turn ended, when there is nothing to do. The core
+nudge* after about a minute without input, when there is nothing to do. The core
 mapped both to `Waiting`, so every tab drifted to `⚠` once left alone, and the one
 thing the plugin exists to tell you ("*this* session needs you") stopped meaning
 anything. Measured on a live pane:
@@ -43,18 +43,26 @@ silently swallow a real "come unblock me". The costs are not symmetric, so the
 fallback is not either. The core applies the same asymmetry to the wire: a missing
 or unrecognized kind counts as needing the user.
 
-## The policy: an idle nudge is ignored only on a finished turn
+## The policy: an idle nudge is ignored, full stop
 
-A nudge arriving *mid-turn* is not noise — it means the agent is blocked on the
-user, typically on a question it asked. That `⚠` must survive. Only a nudge after
-the turn ended is redundant, because `Stop` has already put `✓` there, which is the
-right state.
+The first version of this rule ignored a nudge **only when the pane was already
+`Done`**, on the reading that one arriving mid-turn means the agent is blocked on a
+question it asked. That reading was wrong, and a live pane showed it: a `Bash` call
+ran for ~3m45s, the nudge fired at the 60s mark, and `⚠` (priority 4) buried the
+`⚡` until the next `PostToolUse` — while the user had nothing to do but wait.
 
-The pane's own activity carries this: `Done` is produced by `Stop` alone and any
-later event overwrites it, so `pane_activity[pane] == Done` **is** the
-"turn has ended" flag. A first draft added a separate `turn_done` set; it was
-removed as a second source of truth for the same fact, with its own mutations and
-GC to keep in sync.
+The nudge fires on **~60 seconds of idle input**, not on the turn ending. It
+therefore lands mid-tool just as readily as after `Stop`. And an agent that is
+genuinely blocked on you *ends its turn* to ask — so `Stop` (`✓`) arrives first and
+the real signal comes through as `permission`. There is no case left where an idle
+nudge is the only thing telling you a session needs you:
+
+> `notification=idle` never changes a pane's activity, whatever its state.
+
+That also removes the last reason for the core to read `pane_activity` before
+deciding. (A first draft went the other way and added a separate `turn_done` set to
+track the same fact; it was dropped as a second source of truth, and the state it
+existed to answer is no longer consulted at all.)
 
 ## What was measured, and what it invalidates
 
