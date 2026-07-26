@@ -262,22 +262,15 @@ impl State {
             return;
         }
         if event == "Notification" {
-            // An idle nudge once the turn has ended asks for nothing — `Stop`
-            // already put ✓ there, which is the right state. Arriving *while* the
-            // turn runs it means the agent is blocked on the user (a question),
-            // which is a real ⚠. `Done` is produced by `Stop` alone and any later
-            // event overwrites it, so the pane's own activity already *is* the
-            // "turn has ended" flag — no second state to keep in sync.
+            // An idle nudge asks for nothing: it fires on ~60s of idle *input*, so
+            // it lands both after the turn ended and mid-tool. A real block ends the
+            // turn first, so it arrives as `permission` — never as a nudge.
             //
             // Any other kind, including one missing or unknown from an older or
             // newer producer, counts as needing the user: a wire change must never
             // silently lose the signal (ADR-0006 tolerance, ADR-0007).
-            let idle = args.get("notification").is_some_and(|kind| kind == "idle");
-            if idle && self.pane_activity.get(&pane_id) == Some(&Activity::Done) {
-                trace!(
-                    self,
-                    "pane {pane_id} (tab {tab_id}): idle nudge, turn already done -> ignored"
-                );
+            if args.get("notification").is_some_and(|kind| kind == "idle") {
+                trace!(self, "pane {pane_id} (tab {tab_id}): idle nudge -> ignored");
                 return;
             }
             trace!(
@@ -792,9 +785,9 @@ mod tests {
     }
 
     #[test]
-    fn idle_nudge_mid_turn_still_warns() {
-        // Same nudge, but the turn is still running: the agent is blocked on the
-        // user (a question), so this one must show ⚠.
+    fn idle_nudge_during_a_long_tool_keeps_the_tool_symbol() {
+        // The nudge fires on ~60s of idle *input*, not on the turn ending, so a
+        // multi-minute Bash triggers one while there is nothing to do.
         let mut state = ready_state();
         state.handle_pipe(activity_pipe(&[
             ("pane_id", "10"),
@@ -806,13 +799,12 @@ mod tests {
             ("hook_event", "Notification"),
             ("notification", "idle"),
         ]));
-        assert_eq!(show_effects(&effects), vec![(1, Some("⚠ ".to_string()))]);
+        assert_eq!(show_effects(&effects), vec![]);
+        assert_eq!(state.shown.get(&1), Some(&"⚡ ".to_string()));
     }
 
     #[test]
-    fn a_new_prompt_rearms_the_idle_nudge() {
-        // A finished turn followed by a new prompt: the pane is working again, so
-        // a nudge is once more a real "blocked on you".
+    fn a_new_prompt_does_not_rearm_the_idle_nudge() {
         let mut state = ready_state();
         state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
         state.handle_pipe(activity_pipe(&[
@@ -824,7 +816,8 @@ mod tests {
             ("hook_event", "Notification"),
             ("notification", "idle"),
         ]));
-        assert_eq!(show_effects(&effects), vec![(1, Some("⚠ ".to_string()))]);
+        assert_eq!(show_effects(&effects), vec![]);
+        assert_eq!(state.shown.get(&1), Some(&"● ".to_string()));
     }
 
     #[test]

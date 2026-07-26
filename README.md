@@ -170,8 +170,7 @@ Design decisions are recorded as ADRs in [`docs/adr/`](docs/adr).
 | `PreToolUse` · `WebSearch` / `WebFetch` | web | `◈` |
 | `PreToolUse` · other / MCP | tool | `⚙` |
 | `Notification` · permission prompt | **needs you** | `⚠` |
-| `Notification` · idle nudge, turn finished | — (keeps `✓`, see below) | |
-| `Notification` · idle nudge, mid-turn | **needs you** (it asked you something) | `⚠` |
+| `Notification` · idle nudge | — (ignored, see below) | |
 | `Stop` | done | `✓` |
 | `SubagentStop` | — (ignored, see below) | |
 | `SessionEnd` | — (clears the prefix) | |
@@ -180,11 +179,12 @@ When a tab holds several Claude panes, the highest-priority state wins
 (`⚠ waiting > tool > ● thinking > ◆ init > ✓ done`) — a pending permission request is never
 hidden behind a background pane's activity.
 
-**`⚠` means "blocked", never "finished".** Claude fires `Notification` for two different things: a
-permission prompt, and an *idle nudge* about a minute after it finished. Treating both as `⚠` meant
-every tab you left alone drifted to `⚠`, and the symbol stopped being worth acting on. So the hook
-tells them apart and the plugin ignores the nudge — unless the turn is still running, in which case
-Claude is genuinely blocked on you (it asked a question) and `⚠` is right.
+**`⚠` means "blocked", never "idle".** Claude fires `Notification` for two different things: a
+permission prompt, and an *idle nudge* after about a minute without input — which lands mid-tool
+just as readily as after a finished turn. Treating both as `⚠` meant every tab you left alone
+drifted to `⚠`, and the symbol stopped being worth acting on. So the hook tells them apart and the
+plugin ignores the nudge entirely: an agent that really needs you ends its turn to ask, so the
+signal comes through as a permission prompt.
 
 `SubagentStop` is deliberately *not* "done" either: a subagent finishing says nothing about the agent
 that owns the pane, which may well be mid-tool or blocked. Only the main agent's `Stop` ends the turn.
