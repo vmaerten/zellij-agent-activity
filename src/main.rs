@@ -5,10 +5,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use zellij_tile::prelude::*;
 
-mod installer;
-
-/// Pipe name the hook forwards Claude activity on.
-const PIPE_NAME: &str = "agent_activity";
+/// Pipe name the producer forwards agent activity on. The suffix is the protocol
+/// major: a breaking change ships as `.v2` and old producers simply stop being
+/// heard, instead of being silently misread (ADR-0006).
+const PIPE_NAME: &str = "agent_activity.v1";
 
 /// Everything the plugin can do to the world. The core only emits these; the
 /// wasm adapter's `drive` is the sole place they touch the zellij host — so the
@@ -23,9 +23,6 @@ enum Effect {
         tab_id: usize,
         prefix: Option<String>,
     },
-    /// Run a host command (fire-and-forget) — used once at load to auto-install
-    /// the Claude Code hook into `~/.claude/settings.json`.
-    RunCommand(Vec<String>, BTreeMap<String, String>),
     UnblockCliPipe(String),
     /// Diagnostic line, emitted only under `debug true`.
     Log(String),
@@ -159,10 +156,6 @@ impl State {
             match effect {
                 Effect::RequestPermissions(perms) => request_permission(&perms),
                 Effect::Subscribe(events) => subscribe(&events),
-                Effect::RunCommand(command, context) => {
-                    let argv: Vec<&str> = command.iter().map(String::as_str).collect();
-                    run_command(&argv, context);
-                }
                 Effect::UnblockCliPipe(id) => unblock_cli_pipe_input(&id),
                 // stdout is the render surface; zellij logs plugin stderr.
                 Effect::Log(line) => eprintln!("[zellij-agent-activity] {line}"),
@@ -196,12 +189,10 @@ impl State {
             PermissionType::MessageAndLaunchOtherPlugins,
             // Covers `unblock_cli_pipe_input` (ADR-0003).
             PermissionType::ReadCliPipes,
-            PermissionType::RunCommands,
         ]));
         self.effects.push(Effect::Subscribe(vec![
             EventType::TabUpdate,
             EventType::PaneUpdate,
-            EventType::PermissionRequestResult,
         ]));
         std::mem::take(&mut self.effects)
     }
@@ -210,13 +201,6 @@ impl State {
         match event {
             Event::TabUpdate(tabs) => self.on_tab_update(tabs),
             Event::PaneUpdate(manifest) => self.on_pane_update(manifest),
-            // `run_command` needs the RunCommands grant, which only lands here —
-            // never in `init` (host calls before the grant are denied). So the
-            // hook auto-install is emitted on grant, not at load.
-            Event::PermissionRequestResult(PermissionStatus::Granted) => {
-                let (command, context) = installer::install_command();
-                self.effects.push(Effect::RunCommand(command, context));
-            }
             _ => {}
         }
         std::mem::take(&mut self.effects)
@@ -463,13 +447,8 @@ mod tests {
                     PermissionType::ReadApplicationState,
                     PermissionType::MessageAndLaunchOtherPlugins,
                     PermissionType::ReadCliPipes,
-                    PermissionType::RunCommands,
                 ]),
-                Effect::Subscribe(vec![
-                    EventType::TabUpdate,
-                    EventType::PaneUpdate,
-                    EventType::PermissionRequestResult,
-                ]),
+                Effect::Subscribe(vec![EventType::TabUpdate, EventType::PaneUpdate]),
             ]
         );
     }
@@ -498,18 +477,6 @@ mod tests {
             requested.contains(&PermissionType::ReadCliPipes),
             "…so ReadCliPipes must be requested, got {requested:?}"
         );
-    }
-
-    #[test]
-    fn granted_permission_installs_the_hook() {
-        // The hook install must wait for the grant — `run_command` before it is
-        // denied by the host, which is why it is not emitted from `init`.
-        let mut state = State::default();
-        let effects = state.handle(Event::PermissionRequestResult(PermissionStatus::Granted));
-        assert!(effects.iter().any(|e| matches!(
-            e,
-            Effect::RunCommand(cmd, _) if cmd.first().map(String::as_str) == Some("sh")
-        )));
     }
 
     #[test]

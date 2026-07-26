@@ -42,7 +42,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: bash scripts/test-hook.sh
+      - run: bash producers/claude/scripts/test-forwarder.sh
+      # A broken manifest is only discovered at install time otherwise.
+      - run: jq empty .claude-plugin/marketplace.json producers/claude/.claude-plugin/plugin.json producers/claude/hooks/hooks.json
 
   test:
     name: test

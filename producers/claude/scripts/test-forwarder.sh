@@ -2,7 +2,7 @@
 # Tests the forwarder: given a harness payload on stdin, are the pipe args right?
 
 set -u
-HOOK="$(cd "$(dirname "$0")" && pwd)/zellij-agent-activity-hook.sh"
+HOOK="$(cd "$(dirname "$0")" && pwd)/forwarder.sh"
 failures=0
 
 run() {

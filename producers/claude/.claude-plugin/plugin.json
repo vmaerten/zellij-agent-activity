@@ -1,0 +1,14 @@
+{
+  "name": "zellij-agent-activity",
+  "description": "Forwards Claude Code activity to the zellij-agent-activity Zellij plugin, which shows it as a symbol in front of the tab name",
+  "version": "0.1.0",
+  "author": {
+    "name": "Valentin Maerten",
+    "url": "https://github.com/vmaerten"
+  },
+  "homepage": "https://github.com/vmaerten/zellij-agent-activity",
+  "repository": "https://github.com/vmaerten/zellij-agent-activity",
+  "license": "MIT",
+  "keywords": ["zellij", "tabs", "activity", "hooks"],
+  "hooks": "./hooks/hooks.json"
+}

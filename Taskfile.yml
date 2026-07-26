@@ -29,7 +29,11 @@ tasks:
       - cargo fmt --all --check
       - cargo clippy --all-targets -- -D warnings
       # The forwarder's normalization is the only logic outside cargo test.
-      - bash scripts/test-hook.sh
+      - bash producers/claude/scripts/test-forwarder.sh
+      # A broken manifest is only discovered at install time otherwise. CI has no
+      # claude CLI, so it falls back to a syntax-only check.
+      - if command -v claude >/dev/null; then claude plugin validate .; fi
+      - jq empty .claude-plugin/marketplace.json producers/claude/.claude-plugin/plugin.json producers/claude/hooks/hooks.json
       - cargo test
       - cargo build --release --target wasm32-wasip1
 

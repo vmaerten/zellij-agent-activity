@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code hook → zellij pipe bridge. See the README to register it.
+# Claude Code hook → zellij pipe bridge. Registered by hooks/hooks.json.
 
 [ -z "$ZELLIJ_SESSION_NAME" ] && exit 0
 [ -z "$ZELLIJ_PANE_ID" ] && exit 0
@@ -47,7 +47,7 @@ fi
 # `zellij pipe` blocks until the plugin consumes the message, so without this
 # watchdog a stuck plugin leaks a file descriptor per hook until the zellij
 # server hits EMFILE and crashes.
-zellij pipe --name agent_activity --args "$ARGS" &
+zellij pipe --name agent_activity.v1 --args "$ARGS" &
 pipe_pid=$!
 ( sleep 5; kill "$pipe_pid" 2>/dev/null ) &
 watchdog_pid=$!
