@@ -114,6 +114,11 @@ claude plugin install zellij-agent-activity@zellij-agent-activity
 
 Start a **new** Claude session — Claude reads its hooks at launch — and the tab prefix comes alive.
 
+> `owner/repo` clones over SSH, so if you don't have a GitHub key loaded the first line fails.
+> Either use the URL form
+> (`claude plugin marketplace add https://github.com/vmaerten/zellij-agent-activity.git`) or set
+> `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`.
+
 > Two steps, on purpose: the producer and the consumer are genuinely two processes in two tools.
 > Claude Code owns the merge into your `settings.json`, so nothing here ever writes to a config
 > file it doesn't own, and uninstall is `claude plugin uninstall`. See
