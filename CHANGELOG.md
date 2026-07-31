@@ -27,6 +27,10 @@ Generated from the conventional commits by [git-cliff](https://git-cliff.org).
 - Changelog (git-cliff), release notes and compatibility matrix (#2)
 - Distribute the Claude Code hook as a Claude Code plugin (#7)
 
+### Miscellaneous
+
+- Refresh the 0.1.0 changelog and drop the emoji from the release commit (#8)
+
 ### Refactor
 
 - Rename to zellij-agent-activity (harness-neutral)
