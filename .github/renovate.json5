@@ -1,0 +1,54 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    ':semanticCommits',
+    // Dependency bumps are chores, never feat/fix — they must not drive the
+    // version or show up as user-facing changes in the release notes.
+    ':semanticCommitTypeAll(chore)',
+  ],
+
+  timezone: 'Europe/Paris',
+  schedule: ['before 9am on monday'],
+  labels: ['dependencies'],
+  prConcurrentLimit: 3,
+
+  // The crate declares `zellij-tile = "0.44"`, so patch releases never change
+  // Cargo.toml — only Cargo.lock. Without this, Renovate would raise nothing
+  // and the lock would silently rot, while the release notes derive the
+  // advertised Zellij floor from it. `update-lockfile` refreshes the lock for
+  // in-range updates and edits the range only when the new version is outside.
+  rangeStrategy: 'update-lockfile',
+
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ['before 9am on the first day of the month'],
+  },
+
+  packageRules: [
+    {
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      groupName: 'all non-major dependencies',
+      groupSlug: 'all-minor-patch',
+    },
+
+    // zellij-tile is the compatibility contract with the Zellij host, not an
+    // ordinary dependency: it defines the plugin ABI. Cargo treats a 0.x minor
+    // as breaking, so 0.44 -> 0.45 can stop the plugin from loading. It stays
+    // out of the grouped PR and gets its own, reviewed one.
+    {
+      matchManagers: ['cargo'],
+      matchPackageNames: ['zellij-tile'],
+      groupName: null,
+      separateMinorPatch: true,
+      addLabels: ['compatibility'],
+      prBodyNotes: [
+        '⚠️ `zellij-tile` pins the plugin ABI. Before merging a minor bump: rebuild against the matching Zellij, update the version floor in the README, and add a row to `docs/COMPATIBILITY.md`.',
+      ],
+    },
+  ],
+
+  // No automerge on purpose: CI proves the plugin builds and the tests pass,
+  // but nothing here proves the whole hook -> pipe -> namer chain still works
+  // against a running Zellij host.
+}
