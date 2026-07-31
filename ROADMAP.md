@@ -14,9 +14,12 @@ path to a public, multi-harness release.
 ## Multi-harness — the reason for the neutral name
 
 The core already normalizes events; each harness just needs a **forwarder hook**
-that emits the same `agent_activity` pipe (`pane_id`, `hook_event`, `tool_name`,
-`ts_ms`). One small script per harness:
+that emits the same `agent_activity.v1` pipe (`pane_id`, `hook_event`,
+`tool_name`, `ts_ms`). One small script per harness, each distributed as a native
+extension of that harness under `producers/` (ADR-0005):
 
+- [x] **Claude Code** — a Claude Code plugin (`producers/claude/`), installed via
+  `claude plugin install`; the repo is its own marketplace.
 - [ ] **Codex** — `~/.codex/hooks.json` (or the `notify` program).
 - [ ] **Gemini CLI** — `.gemini/settings.json` hooks (`BeforeTool` / `AfterTool`,
   `AfterAgent`, `Notification`).
@@ -28,8 +31,8 @@ that emits the same `agent_activity` pipe (`pane_id`, `hook_event`, `tool_name`,
 
 ## Robustness / API
 
-- [ ] **Version the pipe** — `agent_activity` → `agent_activity.v1` (the name is
-  the version authority), once third-party producers exist.
+- [x] **Version the pipe** — `agent_activity` → `agent_activity.v1` (the name is
+  the version authority), done before the first distributed producer froze it.
 - [ ] **Standalone sink** (ADR-0004) — add a `rename` sink so the plugin works
   *without* `zellij-tab-namer` (owns the tab name itself, delta-driven). Keep the
   `pipe` sink as the integrated mode.
@@ -39,7 +42,7 @@ that emits the same `agent_activity` pipe (`pane_id`, `hook_event`, `tool_name`,
 
 - [ ] **Desktop notification / bell on `⚠`** — as an opt-in add-on to the hook
   (orthogonal to the plugin; no Rust changes).
-- [ ] **CI** — `cargo test` + `cargo wasm`.
+- [x] **CI** — `cargo test` + `cargo wasm` (plus fmt, clippy and the producer tests).
 - [ ] **awesome-zellij** entry — next to `zj-radar`; emphasize it's a *tab prefix*
   (not a sidebar) that *drives a namer* (doesn't own the tab name).
 

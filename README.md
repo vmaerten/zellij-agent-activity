@@ -69,8 +69,9 @@ No new status bar, no new column, no rename war. Your existing tab name, with a 
 - **Zellij ≥ 0.44.3** (`zellij --version`).
 - **[`zellij-tab-namer`](https://github.com/vmaerten/zellij-tab-namer)** loaded — this plugin
   drives it and does nothing on its own (a standalone mode is on the roadmap).
-- **`jq`** and **bash** — used by the hook that forwards Claude's events.
-- **Claude Code** — the source of the activity events.
+- **`jq`** and **bash** — used by the forwarder that reports Claude's events.
+- **Claude Code ≥ 2.1.120** — the source of the activity events; the producer installs through
+  `claude plugin install`.
 
 | Plugin | `zellij-tile` | Zellij tested | Pipe protocol |
 |---|---|---|---|
@@ -101,21 +102,38 @@ load_plugins {
 ```
 
 Restart Zellij and **grant the plugin's permissions** when prompted
-(`ReadApplicationState`, `MessageAndLaunchOtherPlugins`, `ReadCliPipes`, `RunCommands`). On that grant the plugin
-**auto-installs its Claude Code hook** into `~/.claude/settings.json` (idempotent, backed up to
-`.bak`, and it never touches your other hooks). Start a **new** Claude session — Claude reads its
-hooks at launch — and the tab prefix comes alive.
+(`ReadApplicationState`, `MessageAndLaunchOtherPlugins`, `ReadCliPipes`).
+
+Then install the **producer** — the piece that reports what your agent is doing. For Claude Code
+it ships as a Claude Code plugin, from this same repo:
+
+```sh
+claude plugin marketplace add vmaerten/zellij-agent-activity
+claude plugin install zellij-agent-activity@zellij-agent-activity
+```
+
+Start a **new** Claude session — Claude reads its hooks at launch — and the tab prefix comes alive.
+
+> `owner/repo` clones over SSH, so if you don't have a GitHub key loaded the first line fails.
+> Either use the URL form
+> (`claude plugin marketplace add https://github.com/vmaerten/zellij-agent-activity.git`) or set
+> `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`.
+
+> Two steps, on purpose: the producer and the consumer are genuinely two processes in two tools.
+> Claude Code owns the merge into your `settings.json`, so nothing here ever writes to a config
+> file it doesn't own, and uninstall is `claude plugin uninstall`. See
+> [`docs/adr/0005-producer-per-harness-native-distribution.md`](docs/adr/0005-producer-per-harness-native-distribution.md).
 
 > Replacing [`zellij-attention`](https://github.com/KiryuuLight/zellij-attention)? Remove it from
 > `load_plugins` *and* delete its hook entries from `~/.claude/settings.json` — leaving hooks that
-> pipe to an unloaded plugin can block. This plugin's hook is the replacement.
+> pipe to an unloaded plugin can block. This plugin's producer is the replacement.
 
 ## How it works
 
 ```
-Claude Code hook            zellij-agent-activity-hook.sh        zellij-agent-activity (wasm)
-(~/.claude/settings.json) ─►  $ZELLIJ_PANE_ID + event + ts  ─►   pane → tab · event → symbol
-   PreToolUse/Bash            zellij pipe --name agent_activity   highest-priority per tab
+Claude Code hook            producers/claude/forwarder.sh        zellij-agent-activity (wasm)
+(Claude Code plugin)      ─►  $ZELLIJ_PANE_ID + event + ts  ─►   pane → tab · event → symbol
+   PreToolUse/Bash          zellij pipe --name agent_activity.v1  highest-priority per tab
                                                                           │
                                                           pipe_message_to_plugin("set_prefix")
                                                                   routed by name, by tab_id
@@ -141,7 +159,7 @@ contract — enough to write a producer for any other agent:
 | `notification` | for `Notification` only: `permission` (needs the user) or `idle` (just a nudge) |
 
 ```sh
-zellij pipe --name agent_activity --args "pane_id=3,hook_event=PreToolUse,tool_name=Bash,ts_ms=…"
+zellij pipe --name agent_activity.v1 --args "pane_id=3,hook_event=PreToolUse,tool_name=Bash,ts_ms=…"
 ```
 
 **The producer normalizes, the plugin decides.** Each harness words things differently — Claude says
@@ -237,10 +255,11 @@ tail -f "${TMPDIR:-/tmp}/zellij-$(id -u)/zellij-log/zellij.log" | grep zellij-ag
 [zellij-agent-activity] pane 3 (tab 2): SubagentStop/ unmapped, state kept
 ```
 
-> **After upgrading the plugin**, the hook script on disk is only rewritten when its version tag
-> changes. To force a reinstall (and re-sync the registered events in `~/.claude/settings.json`):
-> `rm ~/.config/zellij/plugins/zellij-agent-activity-hook.sh`, restart Zellij, then start a **new**
-> Claude session.
+> **Upgrading?** The two halves upgrade separately: `curl` the new wasm and restart Zellij for the
+> consumer, `claude plugin update zellij-agent-activity@zellij-agent-activity` then a **new** Claude
+> session for the producer. They only need to agree on the pipe protocol major (`agent_activity.v1`),
+> so a version drift within a major is harmless — see
+> [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
 
 ## How is this different?
 
@@ -266,7 +285,7 @@ are exercised as ordinary unit tests, never in a live session. See
 
 ## Credits
 
-- Event mapping, hook, and auto-installer patterns adapted from
+- Event mapping and hook patterns adapted from
   [`ishefi/zellaude`](https://github.com/ishefi/zellaude).
 - Prior art and hard-won operational lessons (the `zellij pipe` back-pressure guard) from
   [`marktoda/zj-radar`](https://github.com/marktoda/zj-radar).
