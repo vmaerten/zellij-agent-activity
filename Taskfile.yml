@@ -29,12 +29,19 @@ tasks:
       - cargo fmt --all --check
       - cargo clippy --all-targets -- -D warnings
       # The forwarder's normalization is the only logic outside cargo test.
-      - bash scripts/test-hook.sh
+      - bash producers/claude/scripts/test-forwarder.sh
+      # A broken manifest is only discovered at install time otherwise. CI has no
+      # claude CLI, so it falls back to a syntax-only check.
+      - if command -v claude >/dev/null; then claude plugin validate .; fi
+      - jq empty .claude-plugin/marketplace.json producers/claude/.claude-plugin/plugin.json producers/claude/hooks/hooks.json
+      # `version` pins the plugin: pushing the producer without bumping it is a
+      # no-op for everyone who already installed. Fail loudly instead.
+      - 'p=$(jq -r .version producers/claude/.claude-plugin/plugin.json); test "$p" = "{{.CURRENT}}" || { echo "version drift: Cargo.toml={{.CURRENT}} plugin.json=$p — run task bump"; exit 1; }'
       - cargo test
       - cargo build --release --target wasm32-wasip1
 
   bump:
-    desc: 'Set the Cargo.toml version. Prompts for NEW if omitted. Usage: task bump [NEW=0.2.0]'
+    desc: 'Set the version in Cargo.toml and the Claude producer manifest. Prompts for NEW if omitted. Usage: task bump [NEW=0.2.0]'
     requires:
       vars:
         - name: NEW
@@ -43,6 +50,9 @@ tasks:
         msg: 'NEW must be semver X.Y.Z (got "{{.NEW}}")'
     cmds:
       - perl -i -pe 's/^version = ".*"/version = "{{.NEW}}"/' Cargo.toml
+      # Kept in lockstep with the crate: one number describes the whole system.
+      # Claude Code pins the plugin on this string, so it must move every release.
+      - perl -i -pe 's/^(\s*"version":\s*").*(",)$/${1}{{.NEW}}${2}/' producers/claude/.claude-plugin/plugin.json
       - cargo update --workspace --quiet
       - 'echo "bumped -> {{.NEW}}"'
 
@@ -87,7 +97,7 @@ tasks:
       - task: release-notes
         vars: { TAG: 'v{{.NEW}}' }
       - task: ci
-      - git add Cargo.toml Cargo.lock CHANGELOG.md
+      - git add Cargo.toml Cargo.lock CHANGELOG.md producers/claude/.claude-plugin/plugin.json
       - "git commit -m '🔖 chore: release v{{.NEW}}'"
       - git tag v{{.NEW}}
       - git push origin HEAD

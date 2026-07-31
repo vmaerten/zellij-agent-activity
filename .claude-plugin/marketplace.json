@@ -1,0 +1,15 @@
+{
+  "name": "zellij-agent-activity",
+  "description": "Producers that report AI coding agent activity to the zellij-agent-activity Zellij plugin",
+  "owner": {
+    "name": "Valentin Maerten",
+    "url": "https://github.com/vmaerten"
+  },
+  "plugins": [
+    {
+      "name": "zellij-agent-activity",
+      "source": "./producers/claude",
+      "description": "Forwards Claude Code activity to the zellij-agent-activity Zellij plugin, which shows it as a symbol in front of the tab name"
+    }
+  ]
+}

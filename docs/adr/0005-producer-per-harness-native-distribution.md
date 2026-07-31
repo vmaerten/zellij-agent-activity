@@ -41,8 +41,9 @@ producers (`producers/codex/`, `producers/opencode/`) live beside the first.
   (`main.rs` `PermissionRequestResult::Granted`) all go. Keeping self-install
   *and* the Claude Code plugin would mean maintaining two Claude producers for
   the same job — rejected.
-- The plugin's permission set shrinks from three to two: `ReadApplicationState`
-  and `MessageAndLaunchOtherPlugins` stay; **`RunCommands` is dropped** (it only
+- The plugin's permission set shrinks from four to three: `ReadApplicationState`,
+  `MessageAndLaunchOtherPlugins` and `ReadCliPipes` stay; **`RunCommands` is
+  dropped** (it only
   ever served the install). Smaller trust surface. Update `init` and the
   `init_requests_permissions_and_subscribes` / `granted_permission_installs_the_hook`
   tests accordingly.

@@ -42,7 +42,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: bash scripts/test-hook.sh
+      - run: bash producers/claude/scripts/test-forwarder.sh
+      # A broken manifest is only discovered at install time otherwise.
+      - run: jq empty .claude-plugin/marketplace.json producers/claude/.claude-plugin/plugin.json producers/claude/hooks/hooks.json
+      # `version` pins the plugin: pushing the producer without bumping it is a
+      # no-op for everyone who already installed. Fail loudly instead.
+      - name: producer version matches the crate
+        run: |
+          crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          plugin=$(jq -r .version producers/claude/.claude-plugin/plugin.json)
+          test "$crate" = "$plugin" || {
+            echo "version drift: Cargo.toml=$crate plugin.json=$plugin — run task bump"
+            exit 1
+          }
 
   test:
     name: test

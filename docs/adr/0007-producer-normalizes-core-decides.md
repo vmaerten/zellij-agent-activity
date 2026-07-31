@@ -91,7 +91,7 @@ Traced from a real session (`ZELLIJ_AGENT_ACTIVITY_LOG`), headless and interacti
   policy stays in the core.
 - That puts one rule in shell, which `cargo test` cannot reach — so the forwarder
   gains a `ZELLIJ_AGENT_ACTIVITY_DRY_RUN` short-circuit printing the args instead
-  of piping them, and `scripts/test-hook.sh` asserts the mapping (both real
+  of piping them, and the producer's `test-forwarder.sh` asserts the mapping (both real
   wordings, unknown wording, absent message, non-`Notification` events). It runs in
   `task ci` and as its own CI job. Every future producer gets the same treatment:
   a producer that classifies is a producer that must be tested.
