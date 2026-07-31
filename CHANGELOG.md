@@ -15,6 +15,8 @@ Generated from the conventional commits by [git-cliff](https://git-cliff.org).
 ### Build & CI
 
 - CI + release workflows, release Taskfile, wasm distribution (#1)
+- Configure Renovate (#9)
+- Drop Renovate lock file maintenance (#12)
 
 ### Documentation
 
