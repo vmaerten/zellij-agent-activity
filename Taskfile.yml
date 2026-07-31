@@ -98,7 +98,7 @@ tasks:
         vars: { TAG: 'v{{.NEW}}' }
       - task: ci
       - git add Cargo.toml Cargo.lock CHANGELOG.md producers/claude/.claude-plugin/plugin.json
-      - "git commit -m '🔖 chore: release v{{.NEW}}'"
+      - "git commit -m 'chore: release v{{.NEW}}'"
       - git tag v{{.NEW}}
       - git push origin HEAD
       - git push origin v{{.NEW}}
