@@ -17,11 +17,6 @@
   // release notes read the advertised Zellij floor from that lock.
   rangeStrategy: 'update-lockfile',
 
-  lockFileMaintenance: {
-    enabled: true,
-    schedule: ['before 9am on the first day of the month'],
-  },
-
   // Resolved after the presets, so this un-groups zellij-tile: it pins the
   // plugin ABI, and Cargo treats a 0.x minor as breaking.
   packageRules: [
