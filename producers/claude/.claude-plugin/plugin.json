@@ -9,6 +9,5 @@
   "homepage": "https://github.com/vmaerten/zellij-agent-activity",
   "repository": "https://github.com/vmaerten/zellij-agent-activity",
   "license": "MIT",
-  "keywords": ["zellij", "tabs", "activity", "hooks"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["zellij", "tabs", "activity", "hooks"]
 }
