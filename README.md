@@ -8,21 +8,11 @@ The plugin is harness-neutral. Claude Code is wired up today, and Codex, Gemini 
 each a hook script away.
 
 <p align="center">
+  <a href="https://github.com/vmaerten/zellij-agent-activity/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/vmaerten/zellij-agent-activity/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Zellij plugin" src="https://img.shields.io/badge/zellij-plugin-8A2BE2">
   <img alt="Claude Code" src="https://img.shields.io/badge/Claude%20Code-supported-orange">
-  <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust-000000?logo=rust">
   <img alt="Status" src="https://img.shields.io/badge/status-alpha-yellow">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
-</p>
-
-<p align="center">
-  <a href="#what-is-it">What is it?</a> ·
-  <a href="#requirements">Requirements</a> ·
-  <a href="#install">Install</a> ·
-  <a href="#how-it-works">How it works</a> ·
-  <a href="#activity-reference">Activity reference</a> ·
-  <a href="#debugging">Debugging</a> ·
-  <a href="#how-is-this-different">How is this different?</a>
 </p>
 
 <!-- Drop a screen recording here: docs/media/demo.gif -->
