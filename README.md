@@ -63,16 +63,16 @@ newer Zellij *minor* may need a rebuild. The full matrix, the policy and the mig
 
 ## Pick a mode
 
-The `sink` config key says who owns the tab name. It is **mandatory** — without it the plugin does
+The `mode` config key says who owns the tab name. It is **mandatory** — without it the plugin does
 nothing and says so in the Zellij log.
 
-| | `sink "pipe"` | `sink "rename"` |
+| | `mode "pipe"` | `mode "rename"` |
 |---|---|---|
 | needs | `zellij-tab-namer` | nothing |
 | renders | `⚡ myrepo` | `⚡ Tab #1`, or `⚡ myrepo` if you named the tab |
 | owns the name | the namer | this plugin |
 
-> The two are mutually exclusive. `sink "rename"` with `zellij-tab-namer` loaded is two plugins
+> The two are mutually exclusive. `mode "rename"` with `zellij-tab-namer` loaded is two plugins
 > rewriting the same tab name on every update, forever — pick one.
 
 ## Install
@@ -91,7 +91,7 @@ Load it in `~/.config/zellij/config.kdl`, standalone:
 ```kdl
 load_plugins {
     "file:~/.config/zellij/plugins/zellij-agent-activity.wasm" {
-        sink "rename"
+        mode "rename"
     }
 }
 ```
@@ -102,7 +102,7 @@ load_plugins {
 load_plugins {
     "file:~/.config/zellij/plugins/zellij-tab-namer.wasm";
     "file:~/.config/zellij/plugins/zellij-agent-activity.wasm" {
-        sink "pipe"
+        mode "pipe"
     }
 }
 ```
@@ -151,18 +151,18 @@ Claude Code hook            producers/claude/forwarder.sh        zellij-agent-ac
 
 A plugin is the only thing that can see both the tab list and the pane manifest, so mapping the
 reporting `pane_id` onto a stable `tab_id` is the one job a shell hook can't do. That mapping is
-what this plugin adds. What happens to the name after that is the sink's business.
+what this plugin adds. What happens to the name after that is the mode's business.
 
-### The two sinks
+### The two modes
 
 Everything above the last arrow is shared: the same events, the same per-tab winner. Only the last
 step differs.
 
-**`sink "pipe"`** sends `set_prefix` to `zellij-tab-namer`, which keeps its own base name and
+**`mode "pipe"`** sends `set_prefix` to `zellij-tab-namer`, which keeps its own base name and
 composes `prefix + base + suffix`. The namer stays the sole owner of the name, and this plugin never
 calls `rename_tab`.
 
-**`sink "rename"`** writes the name itself, because Zellij has no prefix API — `rename_tab_with_id`
+**`mode "rename"`** writes the name itself, because Zellij has no prefix API — `rename_tab_with_id`
 replaces the whole name. So the plugin strips a leading symbol off whatever the tab is currently
 called, then puts the current one back:
 
@@ -186,11 +186,11 @@ which decorations were its own, so it treats all of them as its own.
 
 **The symbol is the tab's real name**, so Zellij's session serialization captures it. If a session is
 resurrected while the plugin is still loaded and configured, the first update cleans it up. If you
-uninstalled the plugin or switched to `sink "pipe"` in between, the symbol stays: clear it with
+uninstalled the plugin or switched to `mode "pipe"` in between, the symbol stays: clear it with
 `zellij action rename-tab`.
 
 Running `rename` next to the namer is the rename war the design exists to avoid — see
-[ADR-0008](docs/adr/0008-rename-sink-decorates-the-name-it-finds.md) for what the sink decorates and
+[ADR-0008](docs/adr/0008-rename-sink-decorates-the-name-it-finds.md) for what `rename` decorates and
 [ADR-0009](docs/adr/0009-the-sink-is-chosen-explicitly.md) for why the key has no default.
 
 ### The wire format
@@ -260,7 +260,7 @@ agent's `Stop` ends the turn. See
 
 ## Debugging
 
-**Nothing happens at all?** Check `sink` first — it is mandatory, and a missing or misspelled value
+**Nothing happens at all?** Check `mode` first — it is mandatory, and a missing or misspelled value
 makes the plugin do nothing on purpose rather than guess. It always says so, no `debug` needed:
 
 ```sh
@@ -294,7 +294,7 @@ can be large, and it can contain secrets.
 load_plugins {
     "file:~/.config/zellij/plugins/zellij-tab-namer.wasm";
     "file:~/.config/zellij/plugins/zellij-agent-activity.wasm" {
-        sink "pipe"
+        mode "pipe"
         debug true
     }
 }

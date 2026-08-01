@@ -29,7 +29,14 @@ mechanism, and it is deferred to #28 rather than bundled here.
 
 ## The key is mandatory
 
-> `sink "pipe"` or `sink "rename"`. No default.
+> `mode "pipe"` or `mode "rename"`. No default.
+
+The key is `mode`, not `sink`. *Sink* is the architectural word — it names the
+end of the effects chain in ADR-0004, and it stays the name in the code. But
+nobody editing `config.kdl` knows there is an effects chain, and the namer's own
+keys (`git_detection`, `pane_count`) are plain descriptions rather than pattern
+names. Public vocabulary and internal vocabulary are allowed to differ; don't
+"align" them in either direction.
 
 A default of `pipe` keeps every existing config working, but leaves the newcomer
 with the inert plugin this whole feature exists to fix — the default would not
@@ -42,7 +49,7 @@ That also closes the accident: nobody reaches `rename` without typing it.
 Deliberately running `rename` alongside the namer remains possible, and against
 that the guard is the README, in plain words, plus #28 later.
 
-**An unknown value behaves as an absent one.** `sink "renmae"` must not quietly
+**An unknown value behaves as an absent one.** `mode "renmae"` must not quietly
 fall back to `pipe`, which would turn a typo into a plugin that does nothing for
 no visible reason — the most tedious bug of the set.
 
@@ -70,12 +77,12 @@ this comes back.
 
 ## Consequences
 
-- `load` parses `sink` first, after `debug` — which has to come first for the
+- `load` parses `mode` first, after `debug` — which has to come first for the
   tracing macro to read it at all. Absent or unrecognised means no permissions
   requested, no subscriptions, and no host call of any kind: `handle_pipe` also
   stops unblocking CLI pipes, since unblocking without `ReadCliPipes` granted is
   a denied call per hook, the drift ADR-0003 measured at 3157 log lines.
-- Two native tests pin it: `sink` absent, and `sink` misspelled, both yielding
+- Two native tests pin it: `mode` absent, and `mode` misspelled, both yielding
   zero effects plus a log. They are the first tests to assert on an ungated
   `Effect::Log`.
 - The permission request is **scoped to the sink** — `ReadApplicationState` and

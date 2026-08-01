@@ -145,7 +145,7 @@ fn activity_from_event(event: &str, tool: &str) -> Option<Activity> {
 struct State {
     /// Effects queued by the current call, drained into its return value.
     effects: Vec<Effect>,
-    /// `None` means the `sink` key was absent or unusable: the plugin does nothing.
+    /// `None` means the `mode` key was absent or unusable: the plugin does nothing.
     sink: Option<Sink>,
     /// tab position (PaneManifest key) → stable tab_id, from the last TabUpdate.
     tab_id_by_pos: HashMap<usize, usize>,
@@ -231,12 +231,12 @@ impl State {
     fn init(&mut self, config: &BTreeMap<String, String>) -> Vec<Effect> {
         self.debug = matches!(config.get("debug").map(String::as_str), Some("true" | "1"));
         trace!(self, "debug tracing on (config: {config:?})");
-        let sink = match config.get("sink").map(String::as_str) {
+        let sink = match config.get("mode").map(String::as_str) {
             Some("pipe") => Sink::Pipe,
             Some("rename") => Sink::Rename,
             other => {
                 self.effects.push(Effect::Log(format!(
-                    "config error: sink must be \"pipe\" or \"rename\", got {other:?} — doing nothing"
+                    "config error: mode must be \"pipe\" or \"rename\", got {other:?} — doing nothing"
                 )));
                 return std::mem::take(&mut self.effects);
             }
@@ -522,7 +522,7 @@ mod tests {
 
     fn state_with_sink(sink: &str) -> State {
         let mut state = State::default();
-        state.init(&BTreeMap::from([("sink".to_string(), sink.to_string())]));
+        state.init(&BTreeMap::from([("mode".to_string(), sink.to_string())]));
         state
     }
 
@@ -575,7 +575,7 @@ mod tests {
     #[test]
     fn init_requests_permissions_and_subscribes() {
         let mut state = State::default();
-        let effects = state.init(&BTreeMap::from([("sink".to_string(), "pipe".to_string())]));
+        let effects = state.init(&BTreeMap::from([("mode".to_string(), "pipe".to_string())]));
         assert_eq!(
             effects,
             vec![
@@ -607,7 +607,7 @@ mod tests {
             ),
         ] {
             let mut state = State::default();
-            let effects = state.init(&BTreeMap::from([("sink".to_string(), sink.to_string())]));
+            let effects = state.init(&BTreeMap::from([("mode".to_string(), sink.to_string())]));
             let requested = match effects.first() {
                 Some(Effect::RequestPermissions(perms)) => perms.clone(),
                 other => panic!("init must request permissions first, got {other:?}"),
@@ -623,7 +623,7 @@ mod tests {
     #[test]
     fn unblocking_a_cli_pipe_is_covered_by_a_requested_permission() {
         let mut state = State::default();
-        let config = BTreeMap::from([("sink".to_string(), "pipe".to_string())]);
+        let config = BTreeMap::from([("mode".to_string(), "pipe".to_string())]);
         let requested = match state.init(&config).first() {
             Some(Effect::RequestPermissions(perms)) => perms.clone(),
             other => panic!("init must request permissions first, got {other:?}"),
@@ -1042,7 +1042,7 @@ mod tests {
     #[test]
     fn debug_off_emits_no_log_effects() {
         let mut state = State::default();
-        let mut effects = state.init(&BTreeMap::from([("sink".to_string(), "pipe".to_string())]));
+        let mut effects = state.init(&BTreeMap::from([("mode".to_string(), "pipe".to_string())]));
         effects.extend(state.handle(Event::TabUpdate(vec![tab(1, 0, true)])));
         effects.extend(state.handle(Event::PaneUpdate(manifest(&[(0, &[10])]))));
         effects.extend(state.handle_pipe(activity_pipe(&[
@@ -1058,7 +1058,7 @@ mod tests {
         let mut state = State::default();
         state.init(&BTreeMap::from([
             ("debug".to_string(), "true".to_string()),
-            ("sink".to_string(), "pipe".to_string()),
+            ("mode".to_string(), "pipe".to_string()),
         ]));
         state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10])])));
@@ -1258,7 +1258,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_sink_does_nothing_and_says_so() {
+    fn a_missing_mode_does_nothing_and_says_so() {
         let mut state = State::default();
         let effects = state.init(&BTreeMap::new());
         assert_eq!(
@@ -1270,7 +1270,7 @@ mod tests {
         assert!(
             log_lines(&effects)
                 .first()
-                .is_some_and(|l| l.contains("sink")),
+                .is_some_and(|l| l.contains("mode")),
             "must name the offending key, got {effects:?}"
         );
 
@@ -1286,12 +1286,12 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_sink_behaves_like_a_missing_one() {
+    fn an_unknown_mode_behaves_like_a_missing_one() {
         // A typo must not fall back to `pipe`, which would be a plugin doing
         // nothing for no visible reason (ADR-0009).
         let mut state = State::default();
         let effects = state.init(&BTreeMap::from([(
-            "sink".to_string(),
+            "mode".to_string(),
             "renmae".to_string(),
         )]));
         assert_eq!(
