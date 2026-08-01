@@ -15,7 +15,9 @@ each a hook script away.
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
-<!-- Drop a screen recording here: docs/media/demo.gif -->
+<p align="center">
+  <img alt="Three agent sessions, three tabs: one working, one blocked on a permission, one done" src="docs/media/demo.gif" width="100%">
+</p>
 
 ```
 ◆ starting   ● thinking   ⚡ bash   ✎ edit   ◉ read   ⊜ subagent   ◈ web   ⚠ needs you   ✓ done
@@ -340,6 +342,17 @@ The plugin is a pure state machine, events in and effects out, with a thin wasm-
 runs those effects against the Zellij host. The pane to tab routing and the priority aggregation are
 therefore exercised as ordinary unit tests, never in a live session. See
 [`docs/adr/0004-effects-seam-and-sink-abstraction.md`](docs/adr/0004-effects-seam-and-sink-abstraction.md).
+
+The demo above is regenerated with [`vhs`](https://github.com/charmbracelet/vhs), so it can be
+redone identically when the symbols change:
+
+```sh
+task wasm && vhs docs/media/demo.tape
+```
+
+It is a staged session — the panes report their own activity on the pipe rather than running a real
+agent (`docs/media/demo/agent.sh`) — but the decoration is the real plugin, in `mode "rename"` so
+the demo depends on nothing else.
 
 ## Credits
 

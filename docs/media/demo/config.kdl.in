@@ -1,0 +1,14 @@
+// Zellij config for the README demo. @WASM@ is substituted by run.sh.
+// Standalone on purpose: `mode "rename"` needs no other plugin, so the demo is
+// reproducible from this repo alone.
+
+layout_dir "@HERE@"
+pane_frames false
+simplified_ui true
+default_layout "layout"
+
+load_plugins {
+    "file:@WASM@" {
+        mode "rename"
+    }
+}
