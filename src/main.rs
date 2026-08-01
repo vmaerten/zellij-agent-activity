@@ -231,9 +231,9 @@ impl State {
     fn init(&mut self, config: &BTreeMap<String, String>) -> Vec<Effect> {
         self.debug = matches!(config.get("debug").map(String::as_str), Some("true" | "1"));
         trace!(self, "debug tracing on (config: {config:?})");
-        self.sink = match config.get("sink").map(String::as_str) {
-            Some("pipe") => Some(Sink::Pipe),
-            Some("rename") => Some(Sink::Rename),
+        let sink = match config.get("sink").map(String::as_str) {
+            Some("pipe") => Sink::Pipe,
+            Some("rename") => Sink::Rename,
             other => {
                 self.effects.push(Effect::Log(format!(
                     "config error: sink must be \"pipe\" or \"rename\", got {other:?} — doing nothing"
@@ -241,15 +241,16 @@ impl State {
                 return std::mem::take(&mut self.effects);
             }
         };
+        self.sink = Some(sink);
         self.effects.push(Effect::RequestPermissions(vec![
             PermissionType::ReadApplicationState,
             // Covers `unblock_cli_pipe_input` (ADR-0003).
             PermissionType::ReadCliPipes,
-            // Scoped to the sink: under `pipe` the host itself is what stops this
-            // plugin from ever renaming a tab, which is ADR-0001's invariant.
-            match self.sink {
-                Some(Sink::Rename) => PermissionType::ChangeApplicationState,
-                _ => PermissionType::MessageAndLaunchOtherPlugins,
+            // Matched by variant, not by wildcard: a third sink must fail to
+            // compile here rather than inherit a permission it cannot use.
+            match sink {
+                Sink::Pipe => PermissionType::MessageAndLaunchOtherPlugins,
+                Sink::Rename => PermissionType::ChangeApplicationState,
             },
         ]));
         self.effects.push(Effect::Subscribe(vec![
@@ -271,7 +272,9 @@ impl State {
     fn handle_pipe(&mut self, message: PipeMessage) -> Vec<Effect> {
         trace!(self, "pipe '{}' args={:?}", message.name, message.args);
         // Without a sink no permission was requested, so unblocking here would be
-        // a denied host call per hook — the drift ADR-0003 exists to prevent.
+        // a denied host call per hook — the drift ADR-0003 exists to prevent. It
+        // costs no latency either: zellij releases the pipe once a plugin has
+        // handled the message, measured in ADR-0003. Don't "fix" this back.
         if let (PipeSource::Cli(pipe_id), Some(_)) = (&message.source, self.sink) {
             // The hook's `zellij pipe` blocks until we unblock it.
             self.effects.push(Effect::UnblockCliPipe(pipe_id.clone()));
@@ -589,7 +592,8 @@ mod tests {
     #[test]
     fn each_sink_asks_only_for_what_it_uses() {
         // Under `pipe` the host is what stops this plugin renaming a tab, which
-        // is ADR-0001's invariant; under `rename` it has no business piping.
+        // is ADR-0001's invariant; under `rename` it never drives the namer.
+        // `ReadCliPipes` is unrelated — both sinks receive from the producer.
         for (sink, granted, withheld) in [
             (
                 "pipe",
@@ -1195,15 +1199,30 @@ mod tests {
         // side can produce, and only this test ties the two together. An
         // emittable glyph missing from BUILTIN_SYMBOLS grows a tab name by one
         // decoration per event, forever, and SessionEnd cannot clean it.
-        let emitted = [
-            Activity::Init.symbol(),
-            Activity::Thinking.symbol(),
-            Activity::Waiting.symbol(),
-            Activity::Done.symbol(),
-            UNKNOWN_TOOL_SYMBOL,
-        ]
-        .into_iter()
-        .chain(TOOL_SYMBOLS.iter().map(|(_, symbol)| *symbol));
+        let activities = [
+            Activity::Init,
+            Activity::Thinking,
+            Activity::Tool("Bash".to_string()),
+            Activity::Waiting,
+            Activity::Done,
+        ];
+        for activity in &activities {
+            // Anchor: a sixth variant breaks this match, so the list above
+            // cannot quietly fall behind the enum.
+            match activity {
+                Activity::Init
+                | Activity::Thinking
+                | Activity::Tool(_)
+                | Activity::Waiting
+                | Activity::Done => {}
+            }
+        }
+
+        let emitted = activities
+            .iter()
+            .map(Activity::symbol)
+            .chain([UNKNOWN_TOOL_SYMBOL])
+            .chain(TOOL_SYMBOLS.iter().map(|(_, symbol)| *symbol));
 
         for symbol in emitted {
             assert!(
