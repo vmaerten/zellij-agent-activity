@@ -107,8 +107,10 @@ load_plugins {
 }
 ```
 
-Restart Zellij and grant the plugin's permissions when prompted (`ReadApplicationState`,
-`ChangeApplicationState`, `MessageAndLaunchOtherPlugins`, `ReadCliPipes`).
+Restart Zellij and grant the plugin's permissions when prompted: `ReadApplicationState` and
+`ReadCliPipes` in both modes, plus `ChangeApplicationState` under `rename` or
+`MessageAndLaunchOtherPlugins` under `pipe`. Each mode asks only for what it uses, so `pipe` never
+holds the ability to rename a tab.
 
 Then install the producer, the piece that reports what your agent is doing. For Claude Code it ships
 as a Claude Code plugin, from this same repo:
@@ -174,9 +176,18 @@ Because that is idempotent, it repairs itself: reload the plugin while a symbol 
 next update cleans the leftover instead of decorating it twice. Rename a decorated tab yourself and
 the symbol comes straight back on top of your new name.
 
-The trade-off is that stripping is by symbol, so a tab you deliberately named `⚡ deploy` loses its
-`⚡` the first time the plugin decorates it. The symbol set is
-`◆ ● ⚡ ✎ ◉ ⊜ ◈ ⚙ ⚠ ✓`.
+Two consequences worth knowing before you pick this mode.
+
+**Stripping is by symbol, and it applies to every tab.** Not only the ones running an agent: on load
+and on every tab update, a leading `◆ ● ⚡ ✎ ◉ ⊜ ◈ ⚙ ⚠ ✓` followed by a space is removed from every
+tab in the session. A tab you named `⚡ deploy` by hand becomes `deploy` even if no agent ever runs
+in it. That is what makes the repair-on-reload above work — after a restart the plugin cannot know
+which decorations were its own, so it treats all of them as its own.
+
+**The symbol is the tab's real name**, so Zellij's session serialization captures it. If a session is
+resurrected while the plugin is still loaded and configured, the first update cleans it up. If you
+uninstalled the plugin or switched to `sink "pipe"` in between, the symbol stays: clear it with
+`zellij action rename-tab`.
 
 Running `rename` next to the namer is the rename war the design exists to avoid — see
 [ADR-0008](docs/adr/0008-rename-sink-decorates-the-name-it-finds.md) for what the sink decorates and

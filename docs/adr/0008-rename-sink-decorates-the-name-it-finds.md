@@ -68,9 +68,20 @@ Bookkeeping gets none of that. It is also no better on the case that motivates
 it — a config change reloads the plugin, which wipes the memory precisely when a
 tab still carries the old symbol.
 
-The accepted false positive: someone who deliberately names a tab `⚡ deploy`
-loses their `⚡` on the first decoration. The alphabet is exotic enough that this
-is a documented line, not a design problem.
+The accepted false positive, and it is wider than it first looks: the strip runs
+on **every tab, on every `TabUpdate`**, not only on tabs running an agent. A tab
+hand-named `⚡ deploy` becomes `deploy` even if no agent ever touches it. That is
+the price of the repair above — after a reload the plugin cannot tell its own
+leftovers from anyone else's, so it treats every leading glyph as its own. The
+alphabet is exotic enough that this stays a documented line rather than a design
+problem, but the line has to state the real scope.
+
+One more thing follows from owning the name: the decoration *is* the tab's name,
+so zellij's session serialization captures it. A resurrected session repairs
+itself on the first `TabUpdate` — unless the plugin was uninstalled or switched
+to `pipe` meanwhile, in which case the symbol is simply part of the name now and
+`rename-tab` is the only way out. ADR-0003's "a crash leaves a stale prefix that
+heals itself" was written when nothing we emitted could outlive the session.
 
 ## The strip set is historical, not current
 
@@ -83,6 +94,13 @@ cleans anything from *before* the change, which is the one case it exists for.
 The ten built-in glyphs (`◆ ● ⚡ ✎ ◉ ⊜ ◈ ⚙ ⚠ ✓`) therefore become a **legacy
 format**, not a preference: they stay in the code even if the defaults change,
 because tabs out there still carry them. Do not "clean up" that list.
+
+The reverse containment is the one that bites. A symbol that can be *written* but
+not stripped is unbounded growth: `strip` misses it, so it stays in the base, and
+every event prepends one more decoration — `◧ myrepo`, `● ◧ myrepo`, `◧ ◧ myrepo`
+— which `SessionEnd` cannot undo either. Nothing in the type system prevents it,
+so the tool table is a `const` a test walks arm by arm rather than a `match` only
+a human can audit.
 
 ## We never compute a name
 
@@ -134,9 +152,15 @@ what it can actually see.
 - The 26 existing tests keep running against the pipe sink; they exercise
   decisions (priority, staleness, GC), which the split does not touch. The
   rename sink gets its own cases for what is genuinely new — composition, echo
-  idempotence, no emission at load, user rename, reload repair, legacy strip
-  with custom symbols, `Tab #N` — plus a parity test proving both sinks receive
-  the same decisions on one identical scenario.
+  idempotence, no emission at load, user rename, reload repair, every built-in
+  glyph being strippable, the strip reaching tabs with no agent, `Tab #N` — plus
+  a parity test proving both sinks receive the same decisions on one identical
+  scenario.
+- One of those tests guards an invariant nothing else can: every symbol
+  `Activity::symbol` or the tool table can produce is a member of the strip set.
+  It is the reason `tool_symbol` reads from a `const` table instead of matching
+  on string literals — adding a tool now fails the build unless the glyph is
+  strippable too.
 - Two plugins owning the name at once is now possible to configure, and it is an
   unterminated rename loop, not a flicker. ADR-0009 covers what the config does
   about it; automatic back-off is tracked in #28.

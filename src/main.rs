@@ -97,16 +97,31 @@ impl Activity {
     }
 }
 
+/// A table rather than a `match` so a test can walk every arm: a symbol that can
+/// be emitted but not stripped grows a tab name without bound (ADR-0008).
+/// Claude Code calls the subagent tool `Agent`; `Task` is kept for older versions.
+const TOOL_SYMBOLS: [(&str, &str); 11] = [
+    ("Bash", "⚡"),
+    ("Read", "◉"),
+    ("Glob", "◉"),
+    ("Grep", "◉"),
+    ("Edit", "✎"),
+    ("Write", "✎"),
+    ("MultiEdit", "✎"),
+    ("Agent", "⊜"),
+    ("Task", "⊜"),
+    ("WebSearch", "◈"),
+    ("WebFetch", "◈"),
+];
+
+/// Symbol for an unmapped tool, including every MCP one.
+const UNKNOWN_TOOL_SYMBOL: &str = "⚙";
+
 fn tool_symbol(name: &str) -> &'static str {
-    match name {
-        "Bash" => "⚡",
-        "Read" | "Glob" | "Grep" => "◉",
-        "Edit" | "Write" | "MultiEdit" => "✎",
-        // Claude Code calls it `Agent`; `Task` is kept for older versions.
-        "Agent" | "Task" => "⊜",
-        "WebSearch" | "WebFetch" => "◈",
-        _ => "⚙",
-    }
+    TOOL_SYMBOLS
+        .iter()
+        .find(|(tool, _)| *tool == name)
+        .map_or(UNKNOWN_TOOL_SYMBOL, |(_, symbol)| symbol)
 }
 
 /// Map a hook event (+ tool name for `PreToolUse`) to an activity. `None` means
@@ -228,10 +243,14 @@ impl State {
         };
         self.effects.push(Effect::RequestPermissions(vec![
             PermissionType::ReadApplicationState,
-            PermissionType::ChangeApplicationState,
-            PermissionType::MessageAndLaunchOtherPlugins,
             // Covers `unblock_cli_pipe_input` (ADR-0003).
             PermissionType::ReadCliPipes,
+            // Scoped to the sink: under `pipe` the host itself is what stops this
+            // plugin from ever renaming a tab, which is ADR-0001's invariant.
+            match self.sink {
+                Some(Sink::Rename) => PermissionType::ChangeApplicationState,
+                _ => PermissionType::MessageAndLaunchOtherPlugins,
+            },
         ]));
         self.effects.push(Effect::Subscribe(vec![
             EventType::TabUpdate,
@@ -251,7 +270,9 @@ impl State {
 
     fn handle_pipe(&mut self, message: PipeMessage) -> Vec<Effect> {
         trace!(self, "pipe '{}' args={:?}", message.name, message.args);
-        if let PipeSource::Cli(pipe_id) = &message.source {
+        // Without a sink no permission was requested, so unblocking here would be
+        // a denied host call per hook — the drift ADR-0003 exists to prevent.
+        if let (PipeSource::Cli(pipe_id), Some(_)) = (&message.source, self.sink) {
             // The hook's `zellij pipe` blocks until we unblock it.
             self.effects.push(Effect::UnblockCliPipe(pipe_id.clone()));
         }
@@ -557,13 +578,42 @@ mod tests {
             vec![
                 Effect::RequestPermissions(vec![
                     PermissionType::ReadApplicationState,
-                    PermissionType::ChangeApplicationState,
-                    PermissionType::MessageAndLaunchOtherPlugins,
                     PermissionType::ReadCliPipes,
+                    PermissionType::MessageAndLaunchOtherPlugins,
                 ]),
                 Effect::Subscribe(vec![EventType::TabUpdate, EventType::PaneUpdate]),
             ]
         );
+    }
+
+    #[test]
+    fn each_sink_asks_only_for_what_it_uses() {
+        // Under `pipe` the host is what stops this plugin renaming a tab, which
+        // is ADR-0001's invariant; under `rename` it has no business piping.
+        for (sink, granted, withheld) in [
+            (
+                "pipe",
+                PermissionType::MessageAndLaunchOtherPlugins,
+                PermissionType::ChangeApplicationState,
+            ),
+            (
+                "rename",
+                PermissionType::ChangeApplicationState,
+                PermissionType::MessageAndLaunchOtherPlugins,
+            ),
+        ] {
+            let mut state = State::default();
+            let effects = state.init(&BTreeMap::from([("sink".to_string(), sink.to_string())]));
+            let requested = match effects.first() {
+                Some(Effect::RequestPermissions(perms)) => perms.clone(),
+                other => panic!("init must request permissions first, got {other:?}"),
+            };
+            assert!(requested.contains(&granted), "{sink} needs {granted:?}");
+            assert!(
+                !requested.contains(&withheld),
+                "{sink} must not hold {withheld:?}, got {requested:?}"
+            );
+        }
     }
 
     #[test]
@@ -591,6 +641,19 @@ mod tests {
             requested.contains(&PermissionType::ReadCliPipes),
             "…so ReadCliPipes must be requested, got {requested:?}"
         );
+
+        // And with no sink, no permission is requested — so nothing may be
+        // unblocked either, or every hook becomes a denied host call.
+        let mut refused = State::default();
+        refused.init(&BTreeMap::new());
+        let effects = refused.handle_pipe(PipeMessage {
+            source: PipeSource::Cli("pipe-1".to_string()),
+            name: PIPE_NAME.to_string(),
+            payload: None,
+            args: BTreeMap::new(),
+            is_private: false,
+        });
+        assert_eq!(effects, vec![], "nothing may be driven without a sink");
     }
 
     #[test]
@@ -1124,6 +1187,43 @@ mod tests {
                 "{symbol} must be strippable"
             );
         }
+    }
+
+    #[test]
+    fn every_symbol_the_plugin_can_write_is_strippable() {
+        // The idempotence rests on `strip` recognising everything the emitting
+        // side can produce, and only this test ties the two together. An
+        // emittable glyph missing from BUILTIN_SYMBOLS grows a tab name by one
+        // decoration per event, forever, and SessionEnd cannot clean it.
+        let emitted = [
+            Activity::Init.symbol(),
+            Activity::Thinking.symbol(),
+            Activity::Waiting.symbol(),
+            Activity::Done.symbol(),
+            UNKNOWN_TOOL_SYMBOL,
+        ]
+        .into_iter()
+        .chain(TOOL_SYMBOLS.iter().map(|(_, symbol)| *symbol));
+
+        for symbol in emitted {
+            assert!(
+                BUILTIN_SYMBOLS.contains(&symbol),
+                "{symbol} can be written but not stripped — add it to BUILTIN_SYMBOLS"
+            );
+        }
+    }
+
+    #[test]
+    fn rename_strips_known_symbols_from_tabs_it_never_decorates() {
+        // The blast radius users must know about: every TabUpdate strips a
+        // leading known glyph from *every* tab, agent or not. Required by the
+        // reload repair, which cannot know which decorations were ours.
+        let mut state = state_with_sink("rename");
+        let effects = state.handle(Event::TabUpdate(vec![
+            named_tab(1, 0, "myrepo"),
+            named_tab(2, 1, "⚡ deploy"),
+        ]));
+        assert_eq!(rename_effects(&effects), vec![(2, "deploy".to_string())]);
     }
 
     #[test]

@@ -70,11 +70,19 @@ this comes back.
 
 ## Consequences
 
-- `load` parses `sink` before anything else; absent or unrecognised means no
-  permissions requested, no subscriptions, no effects — and one log line.
+- `load` parses `sink` first, after `debug` — which has to come first for the
+  tracing macro to read it at all. Absent or unrecognised means no permissions
+  requested, no subscriptions, and no host call of any kind: `handle_pipe` also
+  stops unblocking CLI pipes, since unblocking without `ReadCliPipes` granted is
+  a denied call per hook, the drift ADR-0003 measured at 3157 log lines.
 - Two native tests pin it: `sink` absent, and `sink` misspelled, both yielding
   zero effects plus a log. They are the first tests to assert on an ungated
   `Effect::Log`.
+- The permission request is **scoped to the sink** — `ReadApplicationState` and
+  `ReadCliPipes` always, plus `MessageAndLaunchOtherPlugins` for `pipe` or
+  `ChangeApplicationState` for `rename`. This is what keeps ADR-0001 enforced by
+  the host rather than by convention: under `pipe`, the plugin is not merely
+  expected not to rename a tab, it is unable to.
 - The README stops presenting `zellij-tab-namer` as a requirement. The choice
   between the two sinks is posed **before** the install steps, because with a
   mandatory key you cannot install without having made it, and it carries the
