@@ -34,6 +34,10 @@ tasks:
       # claude CLI, so it falls back to a syntax-only check.
       - if command -v claude >/dev/null; then claude plugin validate .; fi
       - jq empty .claude-plugin/marketplace.json producers/claude/.claude-plugin/plugin.json producers/claude/hooks/hooks.json
+      # Claude Code loads hooks/hooks.json by itself; naming it in the manifest too
+      # is a duplicate that fails the whole plugin at install, and `claude plugin
+      # validate` does not catch it.
+      - 'jq -e ''(.hooks // "") | test("hooks/hooks\\.json$") | not'' producers/claude/.claude-plugin/plugin.json >/dev/null || { echo "plugin.json declares the auto-loaded hooks/hooks.json — remove the \"hooks\" key"; exit 1; }'
       # `version` pins the plugin: pushing the producer without bumping it is a
       # no-op for everyone who already installed. Fail loudly instead.
       - 'p=$(jq -r .version producers/claude/.claude-plugin/plugin.json); test "$p" = "{{.CURRENT}}" || { echo "version drift: Cargo.toml={{.CURRENT}} plugin.json=$p — run task bump"; exit 1; }'

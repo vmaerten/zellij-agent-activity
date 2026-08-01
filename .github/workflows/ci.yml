@@ -45,6 +45,16 @@ jobs:
       - run: bash producers/claude/scripts/test-forwarder.sh
       # A broken manifest is only discovered at install time otherwise.
       - run: jq empty .claude-plugin/marketplace.json producers/claude/.claude-plugin/plugin.json producers/claude/hooks/hooks.json
+      # Claude Code loads hooks/hooks.json by itself; naming it in the manifest
+      # too is a duplicate that fails the whole plugin at install. `claude plugin
+      # validate` does not catch it, so this does.
+      - name: manifest does not redeclare the standard hooks file
+        run: |
+          jq -e '(.hooks // "") | test("hooks/hooks\\.json$") | not' \
+            producers/claude/.claude-plugin/plugin.json >/dev/null || {
+            echo "plugin.json declares the auto-loaded hooks/hooks.json — remove the \"hooks\" key"
+            exit 1
+          }
       # `version` pins the plugin: pushing the producer without bumping it is a
       # no-op for everyone who already installed. Fail loudly instead.
       - name: producer version matches the crate
