@@ -1,3 +1,7 @@
 /target
 *.wasm
 .DS_Store
+
+# Kept locally, not published: it tracks my own next steps, not anything a
+# user of the plugin needs. The public list lives in GitHub issues.
+/ROADMAP.md
