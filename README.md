@@ -30,23 +30,25 @@ is waiting on you.
 This plugin puts a single symbol in the tab name that follows the live activity of the agent session
 running in that tab's pane.
 
-What it deliberately doesn't do is rename your tabs. Zellij lets only one plugin own a tab's name,
-and two plugins fighting over it produce flickering renames that clear your focus. So this one
-computes the symbol and hands it to
-[`zellij-tab-namer`](https://github.com/vmaerten/zellij-tab-namer) through its decoration pipe. The
-namer stays the only owner of the name and wraps the symbol around it:
+Zellij lets only one plugin own a tab's name, and two fighting over it produce flickering renames
+that clear your focus. So there is exactly one owner, and you pick which:
 
 ```
 ⚡ myrepo
 ```
+
+With [`zellij-tab-namer`](https://github.com/vmaerten/zellij-tab-namer), this plugin computes the
+symbol and hands it over its decoration pipe — the namer owns the name and wraps the symbol around
+it. On its own, this plugin owns the name instead, and decorates whatever the tab is already called.
 
 No new status bar, no extra column, no rename war. Your existing tab name, with a live prefix.
 
 ## Requirements
 
 - Zellij 0.44.3 or later (`zellij --version`).
-- [`zellij-tab-namer`](https://github.com/vmaerten/zellij-tab-namer) loaded. This plugin drives it
-  and does nothing on its own; a standalone mode is on the roadmap.
+- [`zellij-tab-namer`](https://github.com/vmaerten/zellij-tab-namer), **optional**. It names your
+  tabs after the git repo or directory, and this plugin decorates that name instead of owning it.
+  Without it, the plugin decorates whatever the tab is already called.
 - `jq` and bash, used by the forwarder that reports the agent's events.
 - Claude Code 2.1.120 or later, the source of those events. Its producer installs through
   `claude plugin install`.
@@ -59,6 +61,20 @@ A plugin is wasm compiled against `zellij-tile`, and that pins the ABI the Zelli
 newer Zellij *minor* may need a rebuild. The full matrix, the policy and the migration notes are in
 [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
 
+## Pick a mode
+
+The `mode` config key says who owns the tab name. It is **mandatory** — without it the plugin does
+nothing and says so in the Zellij log.
+
+| | `mode "pipe"` | `mode "rename"` |
+|---|---|---|
+| needs | `zellij-tab-namer` | nothing |
+| renders | `⚡ myrepo` | `⚡ Tab #1`, or `⚡ myrepo` if you named the tab |
+| owns the name | the namer | this plugin |
+
+> The two are mutually exclusive. `mode "rename"` with `zellij-tab-namer` loaded is two plugins
+> rewriting the same tab name on every update, forever — pick one.
+
 ## Install
 
 ```sh
@@ -70,17 +86,31 @@ curl -L -o ~/.config/zellij/plugins/zellij-agent-activity.wasm \
 > Rather build it yourself? `cargo wasm` produces the same file, see
 > [Development](#development). Drop it into `~/.config/zellij/plugins/`.
 
-Load it alongside the namer in `~/.config/zellij/config.kdl`:
+Load it in `~/.config/zellij/config.kdl`, standalone:
+
+```kdl
+load_plugins {
+    "file:~/.config/zellij/plugins/zellij-agent-activity.wasm" {
+        mode "rename"
+    }
+}
+```
+
+…or alongside the namer:
 
 ```kdl
 load_plugins {
     "file:~/.config/zellij/plugins/zellij-tab-namer.wasm";
-    "file:~/.config/zellij/plugins/zellij-agent-activity.wasm";
+    "file:~/.config/zellij/plugins/zellij-agent-activity.wasm" {
+        mode "pipe"
+    }
 }
 ```
 
-Restart Zellij and grant the plugin's permissions when prompted (`ReadApplicationState`,
-`MessageAndLaunchOtherPlugins`, `ReadCliPipes`).
+Restart Zellij and grant the plugin's permissions when prompted: `ReadApplicationState` and
+`ReadCliPipes` in both modes, plus `ChangeApplicationState` under `rename` or
+`MessageAndLaunchOtherPlugins` under `pipe`. Each mode asks only for what it uses, so `pipe` never
+holds the ability to rename a tab.
 
 Then install the producer, the piece that reports what your agent is doing. For Claude Code it ships
 as a Claude Code plugin, from this same repo:
@@ -121,7 +151,47 @@ Claude Code hook            producers/claude/forwarder.sh        zellij-agent-ac
 
 A plugin is the only thing that can see both the tab list and the pane manifest, so mapping the
 reporting `pane_id` onto a stable `tab_id` is the one job a shell hook can't do. That mapping is
-what this plugin adds. The symbol, the wrapping and the name itself are left to the namer.
+what this plugin adds. What happens to the name after that is the mode's business.
+
+### The two modes
+
+Everything above the last arrow is shared: the same events, the same per-tab winner. Only the last
+step differs.
+
+**`mode "pipe"`** sends `set_prefix` to `zellij-tab-namer`, which keeps its own base name and
+composes `prefix + base + suffix`. The namer stays the sole owner of the name, and this plugin never
+calls `rename_tab`.
+
+**`mode "rename"`** writes the name itself, because Zellij has no prefix API — `rename_tab_with_id`
+replaces the whole name. So the plugin strips a leading symbol off whatever the tab is currently
+called, then puts the current one back:
+
+```
+"myrepo"     → strip → "myrepo" → writes "⚡ myrepo"
+"⚡ myrepo"   → strip → "myrepo" → writes "● myrepo"      (no stacking)
+"⚡ myrepo"   → strip → "myrepo" → writes "myrepo"        (cleared)
+```
+
+Because that is idempotent, it repairs itself: reload the plugin while a symbol is showing and the
+next update cleans the leftover instead of decorating it twice. Rename a decorated tab yourself and
+the symbol comes straight back on top of your new name.
+
+Two consequences worth knowing before you pick this mode.
+
+**Stripping is by symbol, and it applies to every tab.** Not only the ones running an agent: on load
+and on every tab update, a leading `◆ ● ⚡ ✎ ◉ ⊜ ◈ ⚙ ⚠ ✓` followed by a space is removed from every
+tab in the session. A tab you named `⚡ deploy` by hand becomes `deploy` even if no agent ever runs
+in it. That is what makes the repair-on-reload above work — after a restart the plugin cannot know
+which decorations were its own, so it treats all of them as its own.
+
+**The symbol is the tab's real name**, so Zellij's session serialization captures it. If a session is
+resurrected while the plugin is still loaded and configured, the first update cleans it up. If you
+uninstalled the plugin or switched to `mode "pipe"` in between, the symbol stays: clear it with
+`zellij action rename-tab`.
+
+Running `rename` next to the namer is the rename war the design exists to avoid — see
+[ADR-0008](docs/adr/0008-rename-sink-decorates-the-name-it-finds.md) for what `rename` decorates and
+[ADR-0009](docs/adr/0009-the-sink-is-chosen-explicitly.md) for why the key has no default.
 
 ### The wire format
 
@@ -190,9 +260,16 @@ agent's `Stop` ends the turn. See
 
 ## Debugging
 
-A wrong symbol on a tab has exactly two possible causes, and they need different tools: either the
-harness never fired the event you expected, or it did and the plugin decided something else. Both
-traces are opt-in and off by default.
+**Nothing happens at all?** Check `mode` first — it is mandatory, and a missing or misspelled value
+makes the plugin do nothing on purpose rather than guess. It always says so, no `debug` needed:
+
+```sh
+grep zellij-agent-activity "${TMPDIR:-/tmp}/zellij-$(id -u)/zellij-log/zellij.log"
+```
+
+A *wrong* symbol on a tab has two possible causes, and they need different tools: either the harness
+never fired the event you expected, or it did and the plugin decided something else. Both traces are
+opt-in and off by default.
 
 **1. What the harness fired.** Point the hook at a log file, in the shell you launch Claude from:
 
@@ -217,6 +294,7 @@ can be large, and it can contain secrets.
 load_plugins {
     "file:~/.config/zellij/plugins/zellij-tab-namer.wasm";
     "file:~/.config/zellij/plugins/zellij-agent-activity.wasm" {
+        mode "pipe"
         debug true
     }
 }
@@ -245,8 +323,8 @@ tail -f "${TMPDIR:-/tmp}/zellij-$(id -u)/zellij-log/zellij.log" | grep zellij-ag
 
 | Tool | What it is | How `zellij-agent-activity` differs |
 |---|---|---|
-| [zellij-attention](https://github.com/KiryuuLight/zellij-attention) | Binary `⏳`/`✅` by renaming the tab itself | Richer per-tool states, and it drives the namer instead of fighting it for `TabInfo.name` |
-| [zj-radar](https://github.com/marktoda/zj-radar) | A left sidebar rail (that also renames tabs) | No new UI and no name ownership, just a prefix on your existing tab, through a dedicated namer |
+| [zellij-attention](https://github.com/KiryuuLight/zellij-attention) | Binary `⏳`/`✅` by renaming the tab itself | Richer per-tool states, and a `pipe` mode that drives the namer instead of fighting it for `TabInfo.name` |
+| [zj-radar](https://github.com/marktoda/zj-radar) | A left sidebar rail (that also renames tabs) | No new UI, just a prefix on your existing tab — and it never renames behind your back, since the owner of the name is a config key |
 | [zjstatus](https://github.com/dj95/zjstatus) | The status bar | Leaves your bar alone and decorates the tab name only |
 
 In short: one plugin owns the tab name, and everything else decorates it.

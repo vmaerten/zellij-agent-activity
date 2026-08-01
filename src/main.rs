@@ -10,6 +10,18 @@ use zellij_tile::prelude::*;
 /// heard, instead of being silently misread (ADR-0006).
 const PIPE_NAME: &str = "agent_activity.v1";
 
+/// Every symbol the plugin has ever written. A legacy format, not a preference:
+/// tabs still carry these, so they stay strippable even if the defaults change
+/// (ADR-0008). Don't trim this list.
+const BUILTIN_SYMBOLS: [&str; 10] = ["◆", "●", "⚡", "✎", "◉", "⊜", "◈", "⚙", "⚠", "✓"];
+
+/// Where a computed symbol goes. Mandatory config, no default (ADR-0009).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Sink {
+    Pipe,
+    Rename,
+}
+
 /// Everything the plugin can do to the world. The core only emits these; the
 /// wasm adapter's `drive` is the sole place they touch the zellij host — so the
 /// core below compiles and is tested natively, free of host calls (ADR-0004).
@@ -17,15 +29,30 @@ const PIPE_NAME: &str = "agent_activity.v1";
 enum Effect {
     RequestPermissions(Vec<PermissionType>),
     Subscribe(Vec<EventType>),
-    /// Show (`Some(prefix)`) or clear (`None`) a tab's activity prefix. The sink
-    /// decides how — v1 pipes `set_prefix`/`clear_prefix` to zellij-tab-namer.
-    ShowActivity {
+    SetPrefix {
         tab_id: usize,
         prefix: Option<String>,
     },
+    RenameTab {
+        tab_id: usize,
+        name: String,
+    },
     UnblockCliPipe(String),
-    /// Diagnostic line, emitted only under `debug true`.
+    /// Diagnostic line, emitted only under `debug true` — except a config error,
+    /// which always is: a headless plugin has no other way to speak (ADR-0009).
     Log(String),
+}
+
+/// Drop one leading decoration so recomposing is idempotent. Once, not
+/// repeatedly — we only ever write one, and looping would eat a tab genuinely
+/// named `⚡ ✓ foo`.
+fn strip(name: &str) -> &str {
+    for symbol in BUILTIN_SYMBOLS {
+        if let Some(rest) = name.strip_prefix(symbol).and_then(|r| r.strip_prefix(' ')) {
+            return rest;
+        }
+    }
+    name
 }
 
 /// Queue a diagnostic line; `format!` is skipped when debug is off.
@@ -70,16 +97,31 @@ impl Activity {
     }
 }
 
+/// A table rather than a `match` so a test can walk every arm: a symbol that can
+/// be emitted but not stripped grows a tab name without bound (ADR-0008).
+/// Claude Code calls the subagent tool `Agent`; `Task` is kept for older versions.
+const TOOL_SYMBOLS: [(&str, &str); 11] = [
+    ("Bash", "⚡"),
+    ("Read", "◉"),
+    ("Glob", "◉"),
+    ("Grep", "◉"),
+    ("Edit", "✎"),
+    ("Write", "✎"),
+    ("MultiEdit", "✎"),
+    ("Agent", "⊜"),
+    ("Task", "⊜"),
+    ("WebSearch", "◈"),
+    ("WebFetch", "◈"),
+];
+
+/// Symbol for an unmapped tool, including every MCP one.
+const UNKNOWN_TOOL_SYMBOL: &str = "⚙";
+
 fn tool_symbol(name: &str) -> &'static str {
-    match name {
-        "Bash" => "⚡",
-        "Read" | "Glob" | "Grep" => "◉",
-        "Edit" | "Write" | "MultiEdit" => "✎",
-        // Claude Code calls it `Agent`; `Task` is kept for older versions.
-        "Agent" | "Task" => "⊜",
-        "WebSearch" | "WebFetch" => "◈",
-        _ => "⚙",
-    }
+    TOOL_SYMBOLS
+        .iter()
+        .find(|(tool, _)| *tool == name)
+        .map_or(UNKNOWN_TOOL_SYMBOL, |(_, symbol)| symbol)
 }
 
 /// Map a hook event (+ tool name for `PreToolUse`) to an activity. `None` means
@@ -103,8 +145,12 @@ fn activity_from_event(event: &str, tool: &str) -> Option<Activity> {
 struct State {
     /// Effects queued by the current call, drained into its return value.
     effects: Vec<Effect>,
+    /// `None` means the `mode` key was absent or unusable: the plugin does nothing.
+    sink: Option<Sink>,
     /// tab position (PaneManifest key) → stable tab_id, from the last TabUpdate.
     tab_id_by_pos: HashMap<usize, usize>,
+    /// tab_id → the name we believe it carries; sink `rename` compares against it.
+    tab_name: HashMap<usize, String>,
     /// tab position → non-plugin pane ids, from the last PaneManifest.
     panes: HashMap<usize, Vec<u32>>,
     /// pane_id → stable tab_id (the namer addresses decorations by tab_id).
@@ -159,7 +205,8 @@ impl State {
                 Effect::UnblockCliPipe(id) => unblock_cli_pipe_input(&id),
                 // stdout is the render surface; zellij logs plugin stderr.
                 Effect::Log(line) => eprintln!("[zellij-agent-activity] {line}"),
-                Effect::ShowActivity { tab_id, prefix } => {
+                Effect::RenameTab { tab_id, name } => rename_tab_with_id(tab_id as u64, name),
+                Effect::SetPrefix { tab_id, prefix } => {
                     let mut args = BTreeMap::new();
                     args.insert("tab_id".to_string(), tab_id.to_string());
                     let name = match &prefix {
@@ -184,11 +231,27 @@ impl State {
     fn init(&mut self, config: &BTreeMap<String, String>) -> Vec<Effect> {
         self.debug = matches!(config.get("debug").map(String::as_str), Some("true" | "1"));
         trace!(self, "debug tracing on (config: {config:?})");
+        let sink = match config.get("mode").map(String::as_str) {
+            Some("pipe") => Sink::Pipe,
+            Some("rename") => Sink::Rename,
+            other => {
+                self.effects.push(Effect::Log(format!(
+                    "config error: mode must be \"pipe\" or \"rename\", got {other:?} — doing nothing"
+                )));
+                return std::mem::take(&mut self.effects);
+            }
+        };
+        self.sink = Some(sink);
         self.effects.push(Effect::RequestPermissions(vec![
             PermissionType::ReadApplicationState,
-            PermissionType::MessageAndLaunchOtherPlugins,
             // Covers `unblock_cli_pipe_input` (ADR-0003).
             PermissionType::ReadCliPipes,
+            // Matched by variant, not by wildcard: a third sink must fail to
+            // compile here rather than inherit a permission it cannot use.
+            match sink {
+                Sink::Pipe => PermissionType::MessageAndLaunchOtherPlugins,
+                Sink::Rename => PermissionType::ChangeApplicationState,
+            },
         ]));
         self.effects.push(Effect::Subscribe(vec![
             EventType::TabUpdate,
@@ -208,7 +271,11 @@ impl State {
 
     fn handle_pipe(&mut self, message: PipeMessage) -> Vec<Effect> {
         trace!(self, "pipe '{}' args={:?}", message.name, message.args);
-        if let PipeSource::Cli(pipe_id) = &message.source {
+        // Without a sink no permission was requested, so unblocking here would be
+        // a denied host call per hook — the drift ADR-0003 exists to prevent. It
+        // costs no latency either: zellij releases the pipe once a plugin has
+        // handled the message, measured in ADR-0003. Don't "fix" this back.
+        if let (PipeSource::Cli(pipe_id), Some(_)) = (&message.source, self.sink) {
             // The hook's `zellij pipe` blocks until we unblock it.
             self.effects.push(Effect::UnblockCliPipe(pipe_id.clone()));
         }
@@ -284,6 +351,8 @@ impl State {
 
     fn on_tab_update(&mut self, tabs: Vec<TabInfo>) {
         self.tab_id_by_pos = tabs.iter().map(|t| (t.position, t.tab_id)).collect();
+        // Unconditional: the real name always beats our view of it (ADR-0008).
+        self.tab_name = tabs.iter().map(|t| (t.tab_id, t.name.clone())).collect();
         let alive: HashSet<usize> = tabs.iter().map(|t| t.tab_id).collect();
         self.shown.retain(|id, _| alive.contains(id));
         self.rebuild_pane_to_tab();
@@ -331,16 +400,27 @@ impl State {
         }
     }
 
-    /// Recompute a tab's winning activity (max priority among its panes) and
-    /// emit a ShowActivity effect only if the resulting prefix changed.
+    /// Recompute a tab's winning activity (max priority among its panes) and hand
+    /// the symbol to the configured sink.
     fn recompute_tab(&mut self, tab_id: usize) {
-        let desired: Option<String> = self
+        let symbol = self
             .pane_activity
             .iter()
             .filter(|(pane_id, _)| self.pane_to_tab.get(pane_id) == Some(&tab_id))
             .max_by_key(|(_, activity)| activity.priority())
-            .map(|(_, activity)| format!("{} ", activity.symbol()));
+            .map(|(_, activity)| activity.symbol());
 
+        match self.sink {
+            Some(Sink::Pipe) => self.emit_prefix(tab_id, symbol),
+            Some(Sink::Rename) => self.emit_rename(tab_id, symbol),
+            None => {}
+        }
+    }
+
+    /// Deduplicates against what we last sent: the namer's state is unobservable
+    /// from here, so a memory is all there is.
+    fn emit_prefix(&mut self, tab_id: usize, symbol: Option<&str>) {
+        let desired = symbol.map(|s| format!("{s} "));
         if self.shown.get(&tab_id) == desired.as_ref() {
             return;
         }
@@ -353,9 +433,31 @@ impl State {
             }
         }
         trace!(self, "tab {tab_id}: prefix -> {desired:?}");
-        self.effects.push(Effect::ShowActivity {
+        self.effects.push(Effect::SetPrefix {
             tab_id,
             prefix: desired,
+        });
+    }
+
+    /// Deduplicates against the tab's own name, which we can see — so a user
+    /// rename is picked up and an undecorated tab is never renamed to itself.
+    fn emit_rename(&mut self, tab_id: usize, symbol: Option<&str>) {
+        let Some(current) = self.tab_name.get(&tab_id).cloned() else {
+            return;
+        };
+        let base = strip(&current);
+        let composed = match symbol {
+            Some(s) => format!("{s} {base}"),
+            None => base.to_string(),
+        };
+        if composed == current {
+            return;
+        }
+        trace!(self, "tab {tab_id}: rename {current:?} -> {composed:?}");
+        self.tab_name.insert(tab_id, composed.clone());
+        self.effects.push(Effect::RenameTab {
+            tab_id,
+            name: composed,
         });
     }
 }
@@ -374,6 +476,16 @@ mod tests {
             tab_id: id,
             position,
             active,
+            ..Default::default()
+        }
+    }
+
+    fn named_tab(id: usize, position: usize, name: &str) -> TabInfo {
+        TabInfo {
+            tab_id: id,
+            position,
+            active: true,
+            name: name.to_string(),
             ..Default::default()
         }
     }
@@ -408,10 +520,24 @@ mod tests {
         }
     }
 
-    /// One active tab (id 1, position 0) holding pane 10.
-    fn ready_state() -> State {
+    fn state_with_sink(sink: &str) -> State {
         let mut state = State::default();
+        state.init(&BTreeMap::from([("mode".to_string(), sink.to_string())]));
+        state
+    }
+
+    /// One active tab (id 1, position 0) holding pane 10, piping to the namer.
+    fn ready_state() -> State {
+        let mut state = state_with_sink("pipe");
         state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
+        state.handle(Event::PaneUpdate(manifest(&[(0, &[10])])));
+        state
+    }
+
+    /// The same tab, named, with the plugin owning the name itself.
+    fn ready_rename_state(name: &str) -> State {
+        let mut state = state_with_sink("rename");
+        state.handle(Event::TabUpdate(vec![named_tab(1, 0, name)]));
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10])])));
         state
     }
@@ -420,7 +546,17 @@ mod tests {
         effects
             .iter()
             .filter_map(|e| match e {
-                Effect::ShowActivity { tab_id, prefix } => Some((*tab_id, prefix.clone())),
+                Effect::SetPrefix { tab_id, prefix } => Some((*tab_id, prefix.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn rename_effects(effects: &[Effect]) -> Vec<(usize, String)> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::RenameTab { tab_id, name } => Some((*tab_id, name.clone())),
                 _ => None,
             })
             .collect()
@@ -439,14 +575,14 @@ mod tests {
     #[test]
     fn init_requests_permissions_and_subscribes() {
         let mut state = State::default();
-        let effects = state.init(&BTreeMap::new());
+        let effects = state.init(&BTreeMap::from([("mode".to_string(), "pipe".to_string())]));
         assert_eq!(
             effects,
             vec![
                 Effect::RequestPermissions(vec![
                     PermissionType::ReadApplicationState,
-                    PermissionType::MessageAndLaunchOtherPlugins,
                     PermissionType::ReadCliPipes,
+                    PermissionType::MessageAndLaunchOtherPlugins,
                 ]),
                 Effect::Subscribe(vec![EventType::TabUpdate, EventType::PaneUpdate]),
             ]
@@ -454,9 +590,41 @@ mod tests {
     }
 
     #[test]
+    fn each_sink_asks_only_for_what_it_uses() {
+        // Under `pipe` the host is what stops this plugin renaming a tab, which
+        // is ADR-0001's invariant; under `rename` it never drives the namer.
+        // `ReadCliPipes` is unrelated — both sinks receive from the producer.
+        for (sink, granted, withheld) in [
+            (
+                "pipe",
+                PermissionType::MessageAndLaunchOtherPlugins,
+                PermissionType::ChangeApplicationState,
+            ),
+            (
+                "rename",
+                PermissionType::ChangeApplicationState,
+                PermissionType::MessageAndLaunchOtherPlugins,
+            ),
+        ] {
+            let mut state = State::default();
+            let effects = state.init(&BTreeMap::from([("mode".to_string(), sink.to_string())]));
+            let requested = match effects.first() {
+                Some(Effect::RequestPermissions(perms)) => perms.clone(),
+                other => panic!("init must request permissions first, got {other:?}"),
+            };
+            assert!(requested.contains(&granted), "{sink} needs {granted:?}");
+            assert!(
+                !requested.contains(&withheld),
+                "{sink} must not hold {withheld:?}, got {requested:?}"
+            );
+        }
+    }
+
+    #[test]
     fn unblocking_a_cli_pipe_is_covered_by_a_requested_permission() {
         let mut state = State::default();
-        let requested = match state.init(&BTreeMap::new()).first() {
+        let config = BTreeMap::from([("mode".to_string(), "pipe".to_string())]);
+        let requested = match state.init(&config).first() {
             Some(Effect::RequestPermissions(perms)) => perms.clone(),
             other => panic!("init must request permissions first, got {other:?}"),
         };
@@ -477,11 +645,24 @@ mod tests {
             requested.contains(&PermissionType::ReadCliPipes),
             "…so ReadCliPipes must be requested, got {requested:?}"
         );
+
+        // And with no sink, no permission is requested — so nothing may be
+        // unblocked either, or every hook becomes a denied host call.
+        let mut refused = State::default();
+        refused.init(&BTreeMap::new());
+        let effects = refused.handle_pipe(PipeMessage {
+            source: PipeSource::Cli("pipe-1".to_string()),
+            name: PIPE_NAME.to_string(),
+            payload: None,
+            args: BTreeMap::new(),
+            is_private: false,
+        });
+        assert_eq!(effects, vec![], "nothing may be driven without a sink");
     }
 
     #[test]
     fn activity_before_mapping_is_dropped() {
-        let mut state = State::default();
+        let mut state = state_with_sink("pipe");
         let effects = state.handle_pipe(activity_pipe(&[
             ("pane_id", "10"),
             ("hook_event", "PreToolUse"),
@@ -504,7 +685,7 @@ mod tests {
     #[test]
     fn waiting_wins_over_thinking_in_the_same_tab() {
         // Two Claude panes (10, 11) in tab 1.
-        let mut state = State::default();
+        let mut state = state_with_sink("pipe");
         state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10, 11])])));
 
@@ -523,7 +704,7 @@ mod tests {
 
     #[test]
     fn clearing_the_winner_falls_back_to_the_next_pane() {
-        let mut state = State::default();
+        let mut state = state_with_sink("pipe");
         state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10, 11])])));
         state.handle_pipe(activity_pipe(&[
@@ -594,7 +775,7 @@ mod tests {
 
     #[test]
     fn pane_moved_between_tabs_clears_old_and_sets_new() {
-        let mut state = State::default();
+        let mut state = state_with_sink("pipe");
         state.handle(Event::TabUpdate(vec![tab(1, 0, true), tab(2, 1, false)]));
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10]), (1, &[20])])));
         state.handle_pipe(activity_pipe(&[
@@ -635,7 +816,7 @@ mod tests {
 
     #[test]
     fn pane_update_before_tab_update_resolves_without_deferral() {
-        let mut state = State::default();
+        let mut state = state_with_sink("pipe");
         // PaneUpdate first: positions not yet mapped to tab_ids.
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10])])));
         // Activity arriving in the gap is dropped (unmapped).
@@ -657,7 +838,7 @@ mod tests {
 
     #[test]
     fn plugin_panes_are_ignored() {
-        let mut state = State::default();
+        let mut state = state_with_sink("pipe");
         state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
         let panes = PaneManifest {
             panes: [(
@@ -861,7 +1042,7 @@ mod tests {
     #[test]
     fn debug_off_emits_no_log_effects() {
         let mut state = State::default();
-        let mut effects = state.init(&BTreeMap::new());
+        let mut effects = state.init(&BTreeMap::from([("mode".to_string(), "pipe".to_string())]));
         effects.extend(state.handle(Event::TabUpdate(vec![tab(1, 0, true)])));
         effects.extend(state.handle(Event::PaneUpdate(manifest(&[(0, &[10])]))));
         effects.extend(state.handle_pipe(activity_pipe(&[
@@ -875,7 +1056,10 @@ mod tests {
     #[test]
     fn debug_on_traces_the_whole_decision_path() {
         let mut state = State::default();
-        state.init(&BTreeMap::from([("debug".to_string(), "true".to_string())]));
+        state.init(&BTreeMap::from([
+            ("debug".to_string(), "true".to_string()),
+            ("mode".to_string(), "pipe".to_string()),
+        ]));
         state.handle(Event::TabUpdate(vec![tab(1, 0, true)]));
         state.handle(Event::PaneUpdate(manifest(&[(0, &[10])])));
 
@@ -907,6 +1091,239 @@ mod tests {
                 .iter()
                 .any(|l| l.contains("not mapped to a tab yet")),
             "must trace the drop reason, got {dropped:?}"
+        );
+    }
+
+    #[test]
+    fn rename_composes_the_symbol_onto_the_name_it_finds() {
+        let mut state = ready_rename_state("myrepo");
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ]));
+        assert_eq!(rename_effects(&effects), vec![(1, "⚡ myrepo".to_string())]);
+    }
+
+    #[test]
+    fn rename_ignores_the_echo_of_its_own_write() {
+        // Without the strip this stacks: "⚡ myrepo" would decorate into
+        // "● ⚡ myrepo" on the next event (ADR-0008).
+        let mut state = ready_rename_state("myrepo");
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ]));
+        let echo = state.handle(Event::TabUpdate(vec![named_tab(1, 0, "⚡ myrepo")]));
+        assert_eq!(rename_effects(&echo), vec![]);
+
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PostToolUse"),
+        ]));
+        assert_eq!(rename_effects(&effects), vec![(1, "● myrepo".to_string())]);
+    }
+
+    #[test]
+    fn rename_never_touches_a_tab_with_no_activity() {
+        let mut state = state_with_sink("rename");
+        let tabs = state.handle(Event::TabUpdate(vec![
+            named_tab(1, 0, "myrepo"),
+            named_tab(2, 1, "other"),
+        ]));
+        let panes = state.handle(Event::PaneUpdate(manifest(&[(0, &[10]), (1, &[20])])));
+        assert_eq!(rename_effects(&tabs), vec![]);
+        assert_eq!(rename_effects(&panes), vec![]);
+    }
+
+    #[test]
+    fn rename_reapplies_the_symbol_after_a_manual_rename() {
+        let mut state = ready_rename_state("myrepo");
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ]));
+        // The user runs `rename-tab deploy` while the symbol is showing.
+        let effects = state.handle(Event::TabUpdate(vec![named_tab(1, 0, "deploy")]));
+        assert_eq!(rename_effects(&effects), vec![(1, "⚡ deploy".to_string())]);
+    }
+
+    #[test]
+    fn rename_session_end_restores_the_bare_name() {
+        let mut state = ready_rename_state("myrepo");
+        state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "SessionEnd"),
+        ]));
+        assert_eq!(rename_effects(&effects), vec![(1, "myrepo".to_string())]);
+    }
+
+    #[test]
+    fn rename_repairs_a_decoration_left_by_a_previous_run() {
+        // A reload wipes our state but not the tab name, so the plugin meets a
+        // tab it decorated in a past life and must clean it, not adopt it.
+        let mut state = state_with_sink("rename");
+        let effects = state.handle(Event::TabUpdate(vec![named_tab(1, 0, "⚡ myrepo")]));
+        assert_eq!(rename_effects(&effects), vec![(1, "myrepo".to_string())]);
+    }
+
+    #[test]
+    fn rename_strips_every_built_in_symbol() {
+        // The strip set is a legacy format, not the symbols of this session: a
+        // tab can carry anything a past incarnation wrote (ADR-0008).
+        for symbol in BUILTIN_SYMBOLS {
+            let mut state = state_with_sink("rename");
+            let effects = state.handle(Event::TabUpdate(vec![named_tab(
+                1,
+                0,
+                &format!("{symbol} myrepo"),
+            )]));
+            assert_eq!(
+                rename_effects(&effects),
+                vec![(1, "myrepo".to_string())],
+                "{symbol} must be strippable"
+            );
+        }
+    }
+
+    #[test]
+    fn every_symbol_the_plugin_can_write_is_strippable() {
+        // The idempotence rests on `strip` recognising everything the emitting
+        // side can produce, and only this test ties the two together. An
+        // emittable glyph missing from BUILTIN_SYMBOLS grows a tab name by one
+        // decoration per event, forever, and SessionEnd cannot clean it.
+        let activities = [
+            Activity::Init,
+            Activity::Thinking,
+            Activity::Tool("Bash".to_string()),
+            Activity::Waiting,
+            Activity::Done,
+        ];
+        for activity in &activities {
+            // Anchor: a sixth variant breaks this match, so the list above
+            // cannot quietly fall behind the enum.
+            match activity {
+                Activity::Init
+                | Activity::Thinking
+                | Activity::Tool(_)
+                | Activity::Waiting
+                | Activity::Done => {}
+            }
+        }
+
+        let emitted = activities
+            .iter()
+            .map(Activity::symbol)
+            .chain([UNKNOWN_TOOL_SYMBOL])
+            .chain(TOOL_SYMBOLS.iter().map(|(_, symbol)| *symbol));
+
+        for symbol in emitted {
+            assert!(
+                BUILTIN_SYMBOLS.contains(&symbol),
+                "{symbol} can be written but not stripped — add it to BUILTIN_SYMBOLS"
+            );
+        }
+    }
+
+    #[test]
+    fn rename_strips_known_symbols_from_tabs_it_never_decorates() {
+        // The blast radius users must know about: every TabUpdate strips a
+        // leading known glyph from *every* tab, agent or not. Required by the
+        // reload repair, which cannot know which decorations were ours.
+        let mut state = state_with_sink("rename");
+        let effects = state.handle(Event::TabUpdate(vec![
+            named_tab(1, 0, "myrepo"),
+            named_tab(2, 1, "⚡ deploy"),
+        ]));
+        assert_eq!(rename_effects(&effects), vec![(2, "deploy".to_string())]);
+    }
+
+    #[test]
+    fn rename_decorates_the_default_tab_name_as_it_finds_it() {
+        // No namer, nobody named the tab: `⚠ Tab #3` is the nominal case, and it
+        // still says the only thing that matters — this tab wants you.
+        let mut state = ready_rename_state("Tab #3");
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "Notification"),
+        ]));
+        assert_eq!(rename_effects(&effects), vec![(1, "⚠ Tab #3".to_string())]);
+    }
+
+    #[test]
+    fn a_missing_mode_does_nothing_and_says_so() {
+        let mut state = State::default();
+        let effects = state.init(&BTreeMap::new());
+        assert_eq!(
+            effects.len(),
+            1,
+            "nothing but the complaint, got {effects:?}"
+        );
+        // Not behind `debug`: a headless plugin has no other way to speak.
+        assert!(
+            log_lines(&effects)
+                .first()
+                .is_some_and(|l| l.contains("mode")),
+            "must name the offending key, got {effects:?}"
+        );
+
+        let mut later = state.handle(Event::TabUpdate(vec![named_tab(1, 0, "myrepo")]));
+        later.extend(state.handle(Event::PaneUpdate(manifest(&[(0, &[10])]))));
+        later.extend(state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ])));
+        assert_eq!(show_effects(&later), vec![]);
+        assert_eq!(rename_effects(&later), vec![]);
+    }
+
+    #[test]
+    fn an_unknown_mode_behaves_like_a_missing_one() {
+        // A typo must not fall back to `pipe`, which would be a plugin doing
+        // nothing for no visible reason (ADR-0009).
+        let mut state = State::default();
+        let effects = state.init(&BTreeMap::from([(
+            "mode".to_string(),
+            "renmae".to_string(),
+        )]));
+        assert_eq!(
+            effects.len(),
+            1,
+            "nothing but the complaint, got {effects:?}"
+        );
+        assert_eq!(state.sink, None);
+    }
+
+    #[test]
+    fn both_sinks_receive_the_same_decision() {
+        // The split happens at emission only, so one scenario must reach both
+        // sinks with the same winning activity.
+        fn thinking_in_pane_11(sink: &str) -> State {
+            let mut state = state_with_sink(sink);
+            state.handle(Event::TabUpdate(vec![named_tab(1, 0, "myrepo")]));
+            state.handle(Event::PaneUpdate(manifest(&[(0, &[10, 11])])));
+            state.handle_pipe(activity_pipe(&[
+                ("pane_id", "11"),
+                ("hook_event", "PostToolUse"),
+            ]));
+            state
+        }
+        let waiting = &[("pane_id", "10"), ("hook_event", "Notification")];
+        assert_eq!(
+            show_effects(&thinking_in_pane_11("pipe").handle_pipe(activity_pipe(waiting))),
+            vec![(1, Some("⚠ ".to_string()))]
+        );
+        assert_eq!(
+            rename_effects(&thinking_in_pane_11("rename").handle_pipe(activity_pipe(waiting))),
+            vec![(1, "⚠ myrepo".to_string())]
         );
     }
 
