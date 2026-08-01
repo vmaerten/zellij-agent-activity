@@ -1,6 +1,9 @@
-// Three tabs, three agent sessions at different stages. `zellij:tab-bar` is the
-// built-in, so this needs no plugin alias to resolve.
+// Three tabs, four agent sessions. `web` holds two, which is the point: one keeps
+// working while the other blocks, and the tab shows the blocked one (ADR-0002).
+// `zellij:tab-bar` is the built-in, so this needs no plugin alias to resolve.
 layout {
+    cwd "@HOME@/code/zellij-agent-activity"
+
     default_tab_template {
         pane size=1 borderless=true {
             plugin location="zellij:tab-bar"
@@ -10,12 +13,17 @@ layout {
 
     tab name="api" focus=true {
         pane command="bash" {
-            args "@HERE@/agent.sh" "worker"
+            args "@HERE@/agent.sh" "work"
         }
     }
     tab name="web" {
-        pane command="bash" {
-            args "@HERE@/agent.sh" "blocked"
+        pane split_direction="vertical" {
+            pane command="bash" {
+                args "@HERE@/agent.sh" "busy"
+            }
+            pane command="bash" {
+                args "@HERE@/agent.sh" "blocked"
+            }
         }
     }
     tab name="infra" {

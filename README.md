@@ -16,7 +16,7 @@ each a hook script away.
 </p>
 
 <p align="center">
-  <img alt="Three agent sessions, three tabs: one working, one blocked on a permission, one done" src="docs/media/demo.gif" width="100%">
+  <img alt="Four agent sessions in three tabs: one working through a turn, one finished, and a split tab where one agent keeps working while the other blocks on a permission — the tab shows the warning" src="docs/media/demo.gif" width="100%">
 </p>
 
 ```
@@ -350,9 +350,10 @@ redone identically when the symbols change:
 task wasm && vhs docs/media/demo.tape
 ```
 
-It is a staged session — the panes report their own activity on the pipe rather than running a real
-agent (`docs/media/demo/agent.sh`) — but the decoration is the real plugin, in `mode "rename"` so
-the demo depends on nothing else.
+The commands and their output are real: a clone of this repo in a throwaway `$HOME`, a real starship
+prompt, real `git`. What is staged is the hook events, which a live agent would send instead
+(`docs/media/demo/agent.sh`). The decoration is the plugin itself, in `mode "rename"` so the demo
+depends on nothing else being installed. Needs `starship` and `eza` on `PATH`.
 
 ## Credits
 

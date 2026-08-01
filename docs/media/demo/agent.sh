@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# A staged agent session for the README demo: prints plausible output and reports
-# its own activity on the pipe, using its own $ZELLIJ_PANE_ID so no id has to be
-# guessed from outside. One of these runs per tab.
+# One agent session for the README demo. The commands and their output are real;
+# what is staged is the hook events, which a live agent would send instead. Each
+# pane reports with its own $ZELLIJ_PANE_ID, so no id is guessed from outside.
 set -u
 
-say() { printf '  \033[38;5;245m%s\033[0m\n' "$1"; }
+# The tape answers zellij's permission prompt with keystrokes; without this they
+# would echo into whichever pane has focus.
+stty -echo 2>/dev/null || true
 
 report() {
   local args="pane_id=${ZELLIJ_PANE_ID},hook_event=$1,ts_ms=$(($(date +%s) * 1000))"
@@ -14,39 +16,72 @@ report() {
   sleep 0.05
 }
 
-step() { report "$1" "${2:-}" "${3:-}"; say "$4"; sleep "$5"; }
+# Real starship, real cwd, real branch — only the typing is scripted. Without
+# STARSHIP_SHELL it guesses the parent shell and wraps the prompt in that shell's
+# escapes, which print literally here as `%{%}`.
+export STARSHIP_SHELL=bash
+# `\[` / `\]` mark non-printing runs for PS1; printed as-is they show literally.
+prompt() { starship prompt --status=0 2>/dev/null | sed $'s/\\\\\\[//g; s/\\\\\\]//g'; }
 
-# The tape answers zellij's permission prompt with a keystroke; without this it
-# would echo into whichever pane has focus. Also gives that grant time to land
-# before the first event, so the timeline starts with the plugin listening.
-stty -echo 2>/dev/null || true
+# Show a tool call the way an agent would make it, then actually make it.
+call() {
+  local tool=$1 pause=$2
+  shift 2
+  prompt
+  printf ' %s\n' "$*"
+  report PreToolUse "$tool"
+  sleep 0.4
+  "$@" 2>&1
+  sleep "$pause"
+  report PostToolUse
+}
 
-printf '\033[38;5;110m❯\033[0m claude\n\n'
+think() { sleep "$1"; }
+
+# Let the tape grant permissions before the first event lands.
 sleep 5
 report SessionStart
 sleep 1.2
+report UserPromptSubmit
 
-case "${1:-worker}" in
-  worker)
-    step UserPromptSubmit ""     "" "Thinking…"                        1.6
-    step PreToolUse       Read   "" "Read · src/main.rs"               1.8
-    step PreToolUse       Bash   "" "Bash · cargo test"                2.6
-    step PostToolUse      ""     "" "40 passed"                        1.2
-    step PreToolUse       Edit   "" "Edit · src/main.rs"               2.4
-    step PostToolUse      ""     "" "Thinking…"                        1.6
-    step PreToolUse       Bash   "" "Bash · cargo clippy"              2.4
-    step Stop             ""     "" "Done."                            8.0
+case "${1:-work}" in
+  work)
+    think 1.2
+    call Read 1.0 eza --tree --level=2 src docs
+    think 0.6
+    call Bash 1.4 git log --oneline --no-decorate -3
+    think 0.6
+    call Edit 1.6 git diff --stat HEAD~1
+    think 0.5
+    report Stop
+    ;;
+  busy)
+    # Keeps working the whole time: this is the pane that is *not* blocked, and
+    # the tab still shows the other one's warning. Output stays narrow — this
+    # pane is half a screen wide.
+    think 1.0
+    call Bash 2.2 git status --short --branch
+    think 0.5
+    call Read 2.2 eza -1 src docs
+    think 0.5
+    call Bash 3.0 git log --oneline --no-decorate -2
     ;;
   blocked)
-    step UserPromptSubmit ""     "" "Thinking…"                        1.0
-    step PreToolUse       Bash   "" "Bash · git push"                  1.8
-    step Notification     ""     permission "Waiting for your approval" 12.0
+    # An agent asks *before* running, so the command is proposed and never
+    # executed — which is also why nothing here touches the network.
+    think 1.4
+    prompt
+    printf ' %s\n' "git push origin main"
+    report PreToolUse Bash
+    sleep 1.2
+    printf '\n \033[38;5;215m%s\033[0m\n' "Allow this command? (y/n)"
+    report Notification "" permission
     ;;
   done)
-    step UserPromptSubmit ""     "" "Thinking…"                        1.0
-    step PreToolUse       Read   "" "Read · README.md"                 1.6
-    step Stop             ""     "" "Done."                            12.0
+    think 1.0
+    call Read 0.8 eza --tree --level=1 docs
+    report Stop
     ;;
 esac
 
-sleep 30
+sleep 60

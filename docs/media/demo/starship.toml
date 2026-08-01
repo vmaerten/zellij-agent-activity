@@ -1,0 +1,17 @@
+# Pinned for the demo so the prompt does not depend on whatever starship ships
+# this month. One line, no timer, no host.
+add_newline = false
+format = "$directory$git_branch$character"
+
+[directory]
+style = "bold cyan"
+truncation_length = 2
+truncate_to_repo = true
+
+[git_branch]
+format = " [$branch]($style)"
+style = "purple"
+
+[character]
+success_symbol = " [❯](green)"
+error_symbol = " [❯](red)"
