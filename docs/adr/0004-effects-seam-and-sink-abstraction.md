@@ -13,7 +13,10 @@ show this symbol (or none)". *How* is the sink's job. v1 ships one sink that
 realises it by piping `set_prefix` / `clear_prefix` to the namer. This is the
 seam that lets the plugin be published without forcing the namer on everyone: a
 future **standalone** build adds a `rename` sink that realises the same effect
-with `rename_tab_with_id` (delta-driven, same event-driven model).
+with `rename_tab_with_id` (delta-driven, same event-driven model). ADR-0008
+builds it, and corrects "*How* is the sink's job": the sink turned out to be a
+strategy of the **core**, not of the adapter — the invariant here is that the
+adapter decides nothing, not that the sink lives in it.
 
 ## Consequences
 

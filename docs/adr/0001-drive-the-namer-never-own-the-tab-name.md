@@ -7,6 +7,10 @@ owns the name and exposes a generic decoration Pipe API (`set_prefix` /
 **never renames a tab**. It computes an activity symbol and asks the namer to
 show it, over a pipe. The namer stays the sole owner of the name.
 
+(ADR-0008 refines "never renames a tab": the invariant is **one owner**, and the
+wording above assumed that owner is always the namer. The standalone `rename`
+sink takes the name when nothing else holds it.)
+
 The plugin's only novel job is what a hook cannot do: map the reporting
 `pane_id` to a `tab_id` (a plugin sees `TabUpdate` + `PaneManifest`; a hook does
 not). Everything else — the symbol, the wrapping — is delegated to the namer.
