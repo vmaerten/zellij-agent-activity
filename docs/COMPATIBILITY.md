@@ -43,13 +43,14 @@ This matrix covers the plugin ↔ Zellij axis. Three others exist and move indep
 |---|---|---|
 | Consumer (this plugin) | `Cargo.toml` | — |
 | Zellij host API | `zellij-tile` minor | **yes** — this document |
-| Producers (one per harness) | each producer's own `plugin.json` | numbered in lockstep, but never checked |
+| Producers (one per harness) | each producer's own manifest, or its `VERSION` | numbered in lockstep, but never checked |
 | Pipe protocol | pipe name `agent_activity.vN` | only on a breaking wire change |
 
 Every producer in this repo carries the same version string as the crate, because one number is
 easier to quote in a bug report than one per harness — and because a harness *pins* a plugin on that
-string, so it has to move every release for users to receive the producer at all. `task bump` moves
-them together, and CI fails on drift.
+string, so it has to move every release for users to receive the producer at all. The opencode
+producer has no manifest to pin, so it carries the number in the plugin file itself. `task bump`
+moves them all together, and CI fails on drift.
 
 That is a release convention, not a contract: **nothing checks that the halves match**, and they
 routinely won't, since they install through different channels and at different times.

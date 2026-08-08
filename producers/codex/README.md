@@ -5,7 +5,9 @@ Reports what [Codex](https://github.com/openai/codex) is doing to the
 turns it into a symbol in front of the tab name — `⚡` running a command, `✎` editing, `⚠` waiting
 for you, `✓` done.
 
-This half is only the **producer**. It does nothing on its own: install the Zellij plugin too.
+This half is only the **producer**. It does nothing on its own: install the Zellij plugin too. For
+Claude Code see [`producers/claude`](../claude), for opencode [`producers/opencode`](../opencode) —
+instead of this one, or as well, they coexist.
 
 ```sh
 codex plugin marketplace add vmaerten/zellij-agent-activity
