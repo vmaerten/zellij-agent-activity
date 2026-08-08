@@ -1,0 +1,10 @@
+{
+  "name": "zellij-agent-activity",
+  "plugins": [
+    {
+      "name": "zellij-agent-activity",
+      "source": "./producers/codex",
+      "description": "Forwards Codex activity to the zellij-agent-activity Zellij plugin, which shows it as a symbol in front of the tab name"
+    }
+  ]
+}

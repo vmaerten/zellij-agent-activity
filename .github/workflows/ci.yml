@@ -43,11 +43,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: bash producers/claude/scripts/test-forwarder.sh
+      - run: bash producers/codex/scripts/test-forwarder.sh
       # A broken manifest is only discovered at install time otherwise.
       - run: jq empty .claude-plugin/marketplace.json producers/claude/.claude-plugin/plugin.json producers/claude/hooks/hooks.json
+      - run: jq empty .agents/plugins/marketplace.json producers/codex/.codex-plugin/plugin.json producers/codex/hooks/hooks.json
       # Claude Code loads hooks/hooks.json by itself; naming it in the manifest
       # too is a duplicate that fails the whole plugin at install. `claude plugin
-      # validate` does not catch it, so this does.
+      # validate` does not catch it, so this does. Codex replaces the default
+      # instead of adding to it, so this is a Claude-only trap.
       - name: manifest does not redeclare the standard hooks file
         run: |
           jq -e '(.hooks // "") | test("hooks/hooks\\.json$") | not' \
@@ -55,16 +58,28 @@ jobs:
             echo "plugin.json declares the auto-loaded hooks/hooks.json — remove the \"hooks\" key"
             exit 1
           }
-      # `version` pins the plugin: pushing the producer without bumping it is a
-      # no-op for everyone who already installed. Fail loudly instead.
-      - name: producer version matches the crate
+      # Codex resolves .agents/plugins/marketplace.json before .claude-plugin's, so
+      # a Codex entry pointing at the Claude producer would install the wrong hooks.
+      - name: the Codex marketplace lists the Codex producer only
         run: |
-          crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
-          plugin=$(jq -r .version producers/claude/.claude-plugin/plugin.json)
-          test "$crate" = "$plugin" || {
-            echo "version drift: Cargo.toml=$crate plugin.json=$plugin — run task bump"
+          jq -e '[.plugins[].source] == ["./producers/codex"]' \
+            .agents/plugins/marketplace.json >/dev/null || {
+            echo ".agents/plugins/marketplace.json must list exactly the Codex producer"
             exit 1
           }
+      # `version` pins the plugin: pushing a producer without bumping it is a
+      # no-op for everyone who already installed. Fail loudly instead.
+      - name: producer versions match the crate
+        run: |
+          crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          for manifest in producers/claude/.claude-plugin/plugin.json \
+                          producers/codex/.codex-plugin/plugin.json; do
+            plugin=$(jq -r .version "$manifest")
+            test "$crate" = "$plugin" || {
+              echo "version drift: Cargo.toml=$crate $manifest=$plugin — run task bump"
+              exit 1
+            }
+          done
 
   test:
     name: test
