@@ -6,7 +6,8 @@ turns it into a symbol in front of the tab name — `⚡` running a command, `�
 for you, `✓` done.
 
 This half is only the **producer**. It does nothing on its own: install the Zellij plugin too. For
-Codex, see [`producers/codex`](../codex) instead — or as well, they coexist.
+Codex see [`producers/codex`](../codex), for opencode [`producers/opencode`](../opencode) — instead
+of this one, or as well, they coexist.
 
 ```sh
 claude plugin marketplace add vmaerten/zellij-agent-activity

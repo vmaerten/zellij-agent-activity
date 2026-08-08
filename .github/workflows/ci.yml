@@ -42,8 +42,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
       - run: bash producers/claude/scripts/test-forwarder.sh
       - run: bash producers/codex/scripts/test-forwarder.sh
+      - run: node --test producers/opencode/zellij-agent-activity.test.js
       # A broken manifest is only discovered at install time otherwise.
       - run: jq empty .claude-plugin/marketplace.json producers/claude/.claude-plugin/plugin.json producers/claude/hooks/hooks.json
       - run: jq empty .agents/plugins/marketplace.json producers/codex/.codex-plugin/plugin.json producers/codex/hooks/hooks.json
@@ -80,6 +84,13 @@ jobs:
               exit 1
             }
           done
+          # The opencode producer has no manifest to pin: it carries its version
+          # in the plugin file, which its debug log stamps every line with.
+          plugin=$(perl -ne 'print "$1" if /^const VERSION = "(.*)"/' producers/opencode/zellij-agent-activity.js)
+          test "$crate" = "$plugin" || {
+            echo "version drift: Cargo.toml=$crate opencode plugin=$plugin — run task bump"
+            exit 1
+          }
 
   test:
     name: test
