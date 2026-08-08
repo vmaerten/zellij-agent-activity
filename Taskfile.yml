@@ -28,24 +28,31 @@ tasks:
     cmds:
       - cargo fmt --all --check
       - cargo clippy --all-targets -- -D warnings
-      # The forwarder's normalization is the only logic outside cargo test.
+      # The forwarders' normalization is the only logic outside cargo test.
       - bash producers/claude/scripts/test-forwarder.sh
+      - bash producers/codex/scripts/test-forwarder.sh
       # A broken manifest is only discovered at install time otherwise. CI has no
       # claude CLI, so it falls back to a syntax-only check.
       - if command -v claude >/dev/null; then claude plugin validate .; fi
       - jq empty .claude-plugin/marketplace.json producers/claude/.claude-plugin/plugin.json producers/claude/hooks/hooks.json
+      - jq empty .agents/plugins/marketplace.json producers/codex/.codex-plugin/plugin.json producers/codex/hooks/hooks.json
       # Claude Code loads hooks/hooks.json by itself; naming it in the manifest too
       # is a duplicate that fails the whole plugin at install, and `claude plugin
-      # validate` does not catch it.
+      # validate` does not catch it. Codex replaces the default instead of adding
+      # to it, so this is a Claude-only trap.
       - 'jq -e ''(.hooks // "") | test("hooks/hooks\\.json$") | not'' producers/claude/.claude-plugin/plugin.json >/dev/null || { echo "plugin.json declares the auto-loaded hooks/hooks.json — remove the \"hooks\" key"; exit 1; }'
-      # `version` pins the plugin: pushing the producer without bumping it is a
+      # Codex resolves .agents/plugins/marketplace.json before .claude-plugin's, so
+      # a Codex entry pointing at the Claude producer would install the wrong hooks.
+      - 'jq -e ''[.plugins[].source] == ["./producers/codex"]'' .agents/plugins/marketplace.json >/dev/null || { echo ".agents/plugins/marketplace.json must list exactly the Codex producer"; exit 1; }'
+      # `version` pins the plugin: pushing a producer without bumping it is a
       # no-op for everyone who already installed. Fail loudly instead.
-      - 'p=$(jq -r .version producers/claude/.claude-plugin/plugin.json); test "$p" = "{{.CURRENT}}" || { echo "version drift: Cargo.toml={{.CURRENT}} plugin.json=$p — run task bump"; exit 1; }'
+      - 'p=$(jq -r .version producers/claude/.claude-plugin/plugin.json); test "$p" = "{{.CURRENT}}" || { echo "version drift: Cargo.toml={{.CURRENT}} claude plugin.json=$p — run task bump"; exit 1; }'
+      - 'p=$(jq -r .version producers/codex/.codex-plugin/plugin.json); test "$p" = "{{.CURRENT}}" || { echo "version drift: Cargo.toml={{.CURRENT}} codex plugin.json=$p — run task bump"; exit 1; }'
       - cargo test
       - cargo build --release --target wasm32-wasip1
 
   bump:
-    desc: 'Set the version in Cargo.toml and the Claude producer manifest. Prompts for NEW if omitted. Usage: task bump [NEW=0.2.0]'
+    desc: 'Set the version in Cargo.toml and both producer manifests. Prompts for NEW if omitted. Usage: task bump [NEW=0.2.0]'
     requires:
       vars:
         - name: NEW
@@ -57,6 +64,7 @@ tasks:
       # Kept in lockstep with the crate: one number describes the whole system.
       # Claude Code pins the plugin on this string, so it must move every release.
       - perl -i -pe 's/^(\s*"version":\s*").*(",)$/${1}{{.NEW}}${2}/' producers/claude/.claude-plugin/plugin.json
+      - perl -i -pe 's/^(\s*"version":\s*").*(",)$/${1}{{.NEW}}${2}/' producers/codex/.codex-plugin/plugin.json
       - cargo update --workspace --quiet
       - 'echo "bumped -> {{.NEW}}"'
 
@@ -107,7 +115,7 @@ tasks:
       - task: release-notes
         vars: { TAG: 'v{{.NEW}}' }
       - task: ci
-      - git add Cargo.toml Cargo.lock CHANGELOG.md producers/claude/.claude-plugin/plugin.json
+      - git add Cargo.toml Cargo.lock CHANGELOG.md producers/claude/.claude-plugin/plugin.json producers/codex/.codex-plugin/plugin.json
       - "git commit -m 'chore: release v{{.NEW}}'"
       - git tag v{{.NEW}}
       - git push origin HEAD

@@ -43,15 +43,16 @@ This matrix covers the plugin ↔ Zellij axis. Three others exist and move indep
 |---|---|---|
 | Consumer (this plugin) | `Cargo.toml` | — |
 | Zellij host API | `zellij-tile` minor | **yes** — this document |
-| Producer (per harness) | producer's own `plugin.json` | numbered in lockstep, but never checked |
+| Producers (one per harness) | each producer's own `plugin.json` | numbered in lockstep, but never checked |
 | Pipe protocol | pipe name `agent_activity.vN` | only on a breaking wire change |
 
-The producer in this repo carries the same version string as the crate, because one number is
-easier to quote in a bug report than two — and because Claude Code *pins* a plugin on that string,
-so it has to move every release for users to receive the producer at all.
+Every producer in this repo carries the same version string as the crate, because one number is
+easier to quote in a bug report than one per harness — and because a harness *pins* a plugin on that
+string, so it has to move every release for users to receive the producer at all. `task bump` moves
+them together, and CI fails on drift.
 
-That is a release convention, not a contract: **nothing checks that the two halves match**, and
-they routinely won't, since they install through different channels and at different times.
+That is a release convention, not a contract: **nothing checks that the halves match**, and they
+routinely won't, since they install through different channels and at different times.
 Compatibility comes from tolerance instead (unknown events and unknown args are ignored, never
 fatal), so either side can update first. Only a breaking wire change bumps the protocol, and it
 does so by renaming the pipe.
