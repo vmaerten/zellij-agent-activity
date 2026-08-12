@@ -1,8 +1,8 @@
-# zellij-agent-activity — opencode producer
+# zellij-agent-activity: opencode producer
 
 Reports what [opencode](https://opencode.ai) is doing to the
 [`zellij-agent-activity`](https://github.com/vmaerten/zellij-agent-activity) Zellij plugin, which
-turns it into a symbol in front of the tab name — `⚡` running a command, `✎` editing, `⚠` waiting
+turns it into a symbol in front of the tab name: `⚡` running a command, `✎` editing, `⚠` waiting
 for you, `✓` done.
 
 This half is only the **producer**. It does nothing on its own: install the Zellij plugin too.
@@ -28,7 +28,7 @@ For one project only, use `.opencode/plugins/` in that project instead of the gl
 
 opencode has no command hooks: its extension point is a program loaded into the opencode server. So
 this producer is a single self-contained `.js` file rather than the `forwarder.sh` the Claude Code
-and Codex producers use — it spawns `zellij pipe` itself, with a 5s cap and without waiting for it,
+and Codex producers use: it spawns `zellij pipe` itself, with a 5s cap and without waiting for it,
 so reporting never slows the agent down:
 
 ```sh
@@ -44,7 +44,7 @@ pane the *server* was started in, or nowhere if that was outside Zellij.
 
 ## Subagents stay silent
 
-opencode has no turn boundary that tells the main agent from a subagent — the `task` tool spawns a
+opencode has no turn boundary that tells the main agent from a subagent: the `task` tool spawns a
 child session, and that session's `session.idle` would post a premature `✓` while the main agent is
 still working. So the producer keeps the set of session ids it has seen born with a `parentID`, and
 drops everything they emit. A session it never saw being born is the resumed root one, and is
@@ -72,7 +72,7 @@ instance born during shutdown would leave a `◆` behind after the `dispose` tha
 The cost is that a resumed session (`opencode --continue`) shows no `◆` until your first prompt.
 
 The second translation is the tool name. The wire carries a canonical vocabulary and each producer
-translates into it, so supporting a harness never means rebuilding the wasm — see ADR-0010:
+translates into it, so supporting a harness never means rebuilding the wasm, see ADR-0010:
 
 | opencode tool | wire `tool_name` | symbol |
 |---|---|---|
@@ -89,7 +89,7 @@ translates into it, so supporting a harness never means rebuilding the wasm — 
 | anything else (`todowrite`, `skill`, MCP, …) | unchanged | `⚙` |
 
 `question` is the agent stopping to ask you something outside the approval path, so it gets the same
-`⚠` — and its `tool.execute.after` carries the answer, which clears it.
+`⚠`, and its `tool.execute.after` carries the answer, which clears it.
 
 Those are opencode's runtime tool ids, which are not always the names its docs use. The list a given
 build actually registers comes from the server itself:
@@ -109,7 +109,7 @@ export ZELLIJ_AGENT_ACTIVITY_LOG=~/.local/state/zellij-agent-activity/events.jso
 
 One JSON object per hook, appended as it happens: the opencode `source` that fired it, the raw
 `tool` name, the `session_id`, whether it was `dropped` as a subagent's, and the `args` that went on
-the wire. Tool arguments are intentionally **not** logged — they can be large and can contain
+the wire. Tool arguments are intentionally **not** logged: they can be large and can contain
 secrets.
 
 A line carrying `failed` is a `zellij pipe` that did not exit cleanly, so the message never reached
@@ -118,5 +118,5 @@ the plugin. That is what to grep for when the producer looks busy and the tab do
 To see the args without piping anything to Zellij, set `ZELLIJ_AGENT_ACTIVITY_DRY_RUN=1` before
 launching opencode: each line is printed instead of sent.
 
-`zellij-agent-activity.test.js` drives the real hooks through that same flag —
+`zellij-agent-activity.test.js` drives the real hooks through that same flag:
 `node --test producers/opencode/zellij-agent-activity.test.js`.

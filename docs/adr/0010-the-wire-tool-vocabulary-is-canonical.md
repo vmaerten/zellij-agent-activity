@@ -1,4 +1,4 @@
-# The wire's tool vocabulary is canonical — producers translate into it
+# The wire's tool vocabulary is canonical: producers translate into it
 
 ADR-0007 put harness vocabulary in the producer and kept policy in the core, so
 that **adding a harness is writing a script**. It settled that rule for one field,
@@ -6,8 +6,8 @@ that **adding a harness is writing a script**. It settled that rule for one fiel
 answer was not automatic.
 
 The core renders a symbol by looking `tool_name` up in `TOOL_SYMBOLS`
-(`src/main.rs`), a table whose entries — `Bash`, `Edit`, `Read`, `Agent`,
-`WebSearch` — are Claude Code's tool names, there by accident of being written
+(`src/main.rs`), a table whose entries (`Bash`, `Edit`, `Read`, `Agent`,
+`WebSearch`) are Claude Code's tool names, there by accident of being written
 first. Codex names the same acts differently: file edits are `apply_patch`,
 subagents are `spawn_agent`. Two ways to make them render:
 
@@ -16,7 +16,7 @@ subagents are `spawn_agent`. Two ways to make them render:
 
 The first is what a table invites, and it is wrong for the same reason ADR-0007
 gave: it means editing Rust, rebuilding the wasm and shipping a release that every
-user must install to recognize a harness they may not even run — and once for each
+user must install to recognize a harness they may not even run, and once for each
 harness on the roadmap. The table would also become a union of every vendor's
 naming, where `Edit` and `apply_patch` sit side by side meaning the same thing,
 with nothing saying which a producer should send.
@@ -29,7 +29,7 @@ So:
 The vocabulary is the one already documented in the README's activity reference.
 It is Claude-shaped because Claude came first; that is history, not a claim that
 Claude is the reference implementation. What matters is that it is *fixed* and
-*documented*, so a third-party producer can be written against it — with `⚙` as
+*documented*, so a third-party producer can be written against it, with `⚙` as
 the fallback for anything outside it, which is what makes the set safe to keep
 small.
 
@@ -53,7 +53,7 @@ else through unchanged. Codex already serializes `Bash` for its shell tools
 - One case is not a rename but a reclassification: Codex's `request_user_input`
   is the agent stopping to ask you something outside the approval path. It is
   emitted as `Notification` · `permission`, not as a tool, because `⚠` means
-  blocked and that is exactly what it is. The rule generalises — a producer may
+  blocked and that is exactly what it is. The rule generalises: a producer may
   map a harness's tool onto a *different* wire event when the tool is the signal.
 - This does not reopen ADR-0006: nothing on the wire changed. A producer sending
   an unknown `tool_name` still renders `⚙`, so an untranslated harness degrades

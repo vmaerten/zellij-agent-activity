@@ -1,12 +1,12 @@
-# zellij-agent-activity — Claude Code producer
+# zellij-agent-activity: Claude Code producer
 
 Reports what Claude Code is doing to the
 [`zellij-agent-activity`](https://github.com/vmaerten/zellij-agent-activity) Zellij plugin, which
-turns it into a symbol in front of the tab name — `⚡` running a command, `✎` editing, `⚠` waiting
+turns it into a symbol in front of the tab name: `⚡` running a command, `✎` editing, `⚠` waiting
 for you, `✓` done.
 
 This half is only the **producer**. It does nothing on its own: install the Zellij plugin too. For
-Codex see [`producers/codex`](../codex), for opencode [`producers/opencode`](../opencode) — instead
+Codex see [`producers/codex`](../codex), for opencode [`producers/opencode`](../opencode), instead
 of this one, or as well, they coexist.
 
 ```sh
@@ -18,8 +18,8 @@ Hooks are read at launch, so start a **new** Claude session afterwards.
 
 ## What it does
 
-`hooks/hooks.json` registers `scripts/forwarder.sh` on seven events — `SessionStart`,
-`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`, `SessionEnd` — and the
+`hooks/hooks.json` registers `scripts/forwarder.sh` on seven events (`SessionStart`,
+`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`, `SessionEnd`) and the
 script forwards each one to the plugin:
 
 ```sh
@@ -30,7 +30,7 @@ Outside Zellij (no `$ZELLIJ_PANE_ID`), or without `jq`, it exits 0 immediately.
 
 `SubagentStop` is **not** registered, on purpose: a subagent finishing says nothing about the agent
 that owns the pane, which may well be mid-tool or blocked. Only the main agent's `Stop` ends the
-turn — see ADR-0007.
+turn, see ADR-0007.
 
 The one piece of judgement here is `Notification`, which Claude fires both for a permission prompt
 and for an idle nudge after about a minute without input. The forwarder tells them apart and tags
@@ -45,7 +45,7 @@ Requires `bash`, `jq` and `zellij` on the `PATH`.
 export ZELLIJ_AGENT_ACTIVITY_LOG=~/.local/state/zellij-agent-activity/events.jsonl
 ```
 
-One JSON object per event, appended as it happens. `tool_input` is intentionally **not** logged —
+One JSON object per event, appended as it happens. `tool_input` is intentionally **not** logged:
 it can be large and can contain secrets.
 
 To see the args without piping anything to Zellij:

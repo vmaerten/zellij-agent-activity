@@ -27,7 +27,7 @@ Sleep 2500ms
 Show
 
 # `api` works through a turn: read, bash, edit, bash. Meanwhile `web` blocks on a
-# permission and `infra` finishes — the whole point is seeing that from here.
+# permission and `infra` finishes: the whole point is seeing that from here.
 Sleep 12s
 
 # Ctrl+t is tab mode; the digit picks the tab, Escape leaves the mode.

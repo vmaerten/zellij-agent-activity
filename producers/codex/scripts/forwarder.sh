@@ -40,7 +40,7 @@ esac
 # Codex names its tools its own way; the wire carries the canonical vocabulary and
 # the producer translates into it, so the wasm never grows a harness branch
 # (ADR-0010). Unlisted names ride through and render as the generic tool symbol.
-# Only PreToolUse is translated — it is the one event whose tool_name the wire uses.
+# Only PreToolUse is translated: it is the one event whose tool_name the wire uses.
 if [ "$HOOK_EVENT" = "PreToolUse" ]; then
   case "$TOOL_NAME" in
     apply_patch) TOOL_NAME="Edit" ;;
