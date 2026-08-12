@@ -2,14 +2,14 @@
 
 Without `zellij-tab-namer` this plugin does nothing. It computes a symbol and
 pipes it to the namer, so anyone who does not already run the namer installs an
-inert plugin. ADR-0004 anticipated the fix — the core emits an abstract
+inert plugin. ADR-0004 anticipated the fix: the core emits an abstract
 "this tab should show this symbol", and a second sink realises it with
-`rename_tab_with_id` — and left the hard part open: **what does a sink that
+`rename_tab_with_id`, and left the hard part open: **what does a sink that
 writes `TabInfo.name` decorate?**
 
 ADR-0001 is not weakened by this; its wording is. The invariant is that *only
-one plugin may own a tab name*, and the consequence written there — "this plugin
-never renames a tab" — assumed the namer was always the owner. The rename sink
+one plugin may own a tab name*, and the consequence written there, "this plugin
+never renames a tab", assumed the namer was always the owner. The rename sink
 is what you run when nothing else owns the name. Ownership stays exclusive, it
 just is not always the namer's. ADR-0009 makes the choice explicit so the two
 can never be on at once by accident.
@@ -39,7 +39,7 @@ Two candidates. **Bookkeeping**: remember what we wrote, and treat any incoming
 name that differs as somebody else's. **The alphabet**: strip a known symbol off
 the front of whatever name we find, and put the wanted one back.
 
-The alphabet wins, and the reason is that it is idempotent — the composition is
+The alphabet wins, and the reason is that it is idempotent: the composition is
 a pure function of the tab's current name, so there is no stored state that can
 drift from reality:
 
@@ -52,11 +52,11 @@ Everything else falls out of that, with no special case for any of it:
 
 | what happens | symbol | composed | our view | emitted |
 |---|---|---|---|---|
-| `TabUpdate` at load | — | `myrepo` | `myrepo` | **nothing** — identical |
+| `TabUpdate` at load | - | `myrepo` | `myrepo` | **nothing**, identical |
 | `PreToolUse` / Bash | `⚡` | `⚡ myrepo` | `myrepo` | rename; view becomes `⚡ myrepo` |
-| `TabUpdate` (our echo) | `⚡` | `⚡ myrepo` | `⚡ myrepo` | **nothing** — the loop closes |
-| user runs `rename-tab deploy` | `⚡` | `⚡ deploy` | `deploy` | rename — the symbol survives |
-| `SessionEnd` | — | `deploy` | `⚡ deploy` | rename — cleaned |
+| `TabUpdate` (our echo) | `⚡` | `⚡ myrepo` | `⚡ myrepo` | **nothing**, the loop closes |
+| user runs `rename-tab deploy` | `⚡` | `⚡ deploy` | `deploy` | rename, the symbol survives |
+| `SessionEnd` | - | `deploy` | `⚡ deploy` | rename, cleaned |
 
 Row 3 is the anti-`● ⚡ myrepo` guard, and note that it needs no knowledge that
 the write was ours. Row 4 is a user rename crossing a decoration without a rule
@@ -65,20 +65,20 @@ called `⚡ myrepo` composes `strip("⚡ myrepo")` = `myrepo`, sees a difference
 and emits one cleaning rename.
 
 Bookkeeping gets none of that. It is also no better on the case that motivates
-it — a config change reloads the plugin, which wipes the memory precisely when a
+it: a config change reloads the plugin, which wipes the memory precisely when a
 tab still carries the old symbol.
 
 The accepted false positive, and it is wider than it first looks: the strip runs
 on **every tab, on every `TabUpdate`**, not only on tabs running an agent. A tab
 hand-named `⚡ deploy` becomes `deploy` even if no agent ever touches it. That is
-the price of the repair above — after a reload the plugin cannot tell its own
+the price of the repair above: after a reload the plugin cannot tell its own
 leftovers from anyone else's, so it treats every leading glyph as its own. The
 alphabet is exotic enough that this stays a documented line rather than a design
 problem, but the line has to state the real scope.
 
 One more thing follows from owning the name: the decoration *is* the tab's name,
 so zellij's session serialization captures it. A resurrected session repairs
-itself on the first `TabUpdate` — unless the plugin was uninstalled or switched
+itself on the first `TabUpdate`, unless the plugin was uninstalled or switched
 to `pipe` meanwhile, in which case the symbol is simply part of the name now and
 `rename-tab` is the only way out. ADR-0003's "a crash leaves a stale prefix that
 heals itself" was written when nothing we emitted could outlive the session.
@@ -97,22 +97,22 @@ because tabs out there still carry them. Do not "clean up" that list.
 
 The reverse containment is the one that bites. A symbol that can be *written* but
 not stripped is unbounded growth: `strip` misses it, so it stays in the base, and
-every event prepends one more decoration — `◧ myrepo`, `● ◧ myrepo`, `◧ ◧ myrepo`
-— which `SessionEnd` cannot undo either. Nothing in the type system prevents it,
+every event prepends one more decoration: `◧ myrepo`, `● ◧ myrepo`, `◧ ◧ myrepo`,
+which `SessionEnd` cannot undo either. Nothing in the type system prevents it,
 so the tool table is a `const` a test walks arm by arm rather than a `match` only
 a human can audit.
 
 ## We never compute a name
 
 The sink decorates the name zellij reports and nothing else. On a tab nobody has
-named, `TabInfo.name` is `Tab #3`, so the sink renders `⚠ Tab #3` — and that is
+named, `TabInfo.name` is `Tab #3`, so the sink renders `⚠ Tab #3`, and that is
 the nominal case for the audience this exists for, someone with no namer.
 
 Rebuilding the namer's job here (cwd, git root) was rejected outright. Treating
 `Tab #N` as an empty name and rendering a bare `⚡` was rejected too: the base
 would be empty, so a clear could not restore `Tab #3`, and the idempotence above
 would break on the most common case for a cosmetic gain. `⚠ Tab #3` still says
-the only thing the plugin exists to say — *this* tab wants you.
+the only thing the plugin exists to say: *this* tab wants you.
 
 ## Deduplication compares to the tab, not to a memory
 
@@ -125,13 +125,13 @@ an undecorated tab composes to its own current name, which differs from an empty
 > Emit a rename if and only if the composed name differs from the name we
 > believe the tab carries.
 
-That belief lives in `tab_name`, which the core needs anyway — `TabUpdate`
+That belief lives in `tab_name`, which the core needs anyway: `TabUpdate`
 already carries `t.name` and the code was throwing it away. It is updated
 optimistically on write, and **overwritten unconditionally by every
 `TabUpdate`**: under this scheme there is nothing in it worth preserving, so the
 real name always wins.
 
-So the rename sink needs no `shown` at all — it compares against reality, which
+So the rename sink needs no `shown` at all: it compares against reality, which
 is the same argument that chose the alphabet. `shown` stays, unchanged, for the
 pipe sink, which has no way to observe the namer's state and must compare
 against a memory. The asymmetry is deliberate: each sink deduplicates against
@@ -140,26 +140,26 @@ what it can actually see.
 ## Consequences
 
 - **The sink is a strategy of the core, not a concern of the adapter.** The core
-  reads the config and emits the final effect — `SetPrefix { tab_id, prefix }`
-  or `RenameTab { tab_id, name }` — and `drive` goes back to being a 1:1 mapping
+  reads the config and emits the final effect (`SetPrefix { tab_id, prefix }`
+  or `RenameTab { tab_id, name }`) and `drive` goes back to being a 1:1 mapping
   onto host functions. This refines ADR-0004: the invariant there is *the
   adapter decides nothing*, not *the sink lives in the adapter*. Putting the
   strip in `drive` would have parked the only real logic of this feature on the
   one side of the linker `cargo test` cannot reach.
 - The core gains `tab_name: HashMap<usize, String>`, filled from `TabUpdate`.
-  Everything else — strip, composition, the emit rule — stays in the pure core
+  Everything else (strip, composition, the emit rule) stays in the pure core
   and is tested natively.
 - The 26 existing tests keep running against the pipe sink; they exercise
   decisions (priority, staleness, GC), which the split does not touch. The
-  rename sink gets its own cases for what is genuinely new — composition, echo
+  rename sink gets its own cases for what is genuinely new: composition, echo
   idempotence, no emission at load, user rename, reload repair, every built-in
-  glyph being strippable, the strip reaching tabs with no agent, `Tab #N` — plus
+  glyph being strippable, the strip reaching tabs with no agent, `Tab #N`, plus
   a parity test proving both sinks receive the same decisions on one identical
   scenario.
 - One of those tests guards an invariant nothing else can: every symbol
   `Activity::symbol` or the tool table can produce is a member of the strip set.
   It is the reason `tool_symbol` reads from a `const` table instead of matching
-  on string literals — adding a tool now fails the build unless the glyph is
+  on string literals: adding a tool now fails the build unless the glyph is
   strippable too.
 - Two plugins owning the name at once is now possible to configure, and it is an
   unterminated rename loop, not a flicker. ADR-0009 covers what the config does

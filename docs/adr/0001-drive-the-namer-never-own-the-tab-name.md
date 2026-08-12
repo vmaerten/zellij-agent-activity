@@ -13,19 +13,19 @@ sink takes the name when nothing else holds it.)
 
 The plugin's only novel job is what a hook cannot do: map the reporting
 `pane_id` to a `tab_id` (a plugin sees `TabUpdate` + `PaneManifest`; a hook does
-not). Everything else — the symbol, the wrapping — is delegated to the namer.
+not). Everything else, the symbol and the wrapping, is delegated to the namer.
 
 ## Consequences
 
 - **Invariant: the namer is not modified.** Delivery is solved on this side. The
   plugin sends `pipe_message_to_plugin(MessageToPlugin::new("set_prefix")
   .with_args(...))`; zellij is expected to route it to the already-loaded namer
-  by pipe name (the namer accepts `PipeSource::Plugin` messages — see its tests)
+  by pipe name (the namer accepts `PipeSource::Plugin` messages, see its tests)
   without launching anything. This routing is server-side and unverified
   statically, so it is validated live before the plugin is fleshed out.
 - If name-based delivery does not reach the namer, the fallback is
   `.with_plugin_url(namer_url)` from a config key (default to the common namer
-  URL) — accepting that a wrong URL risks launching a duplicate namer. Adding a
+  URL), accepting that a wrong URL risks launching a duplicate namer. Adding a
   receiver verb to the namer is **excluded**: it would break this invariant.
 - This is why the draft that did `rename_tab` directly (and `zellij-attention`)
   are abandoned rather than continued: they reintroduce the collision.

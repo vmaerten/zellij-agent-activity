@@ -10,7 +10,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# rustflags: "" — the action defaults to a global -D warnings that would apply
+# rustflags: "" is set because the action defaults to a global -D warnings that would apply
 # to dependencies too; the clippy job already gates our own code.
 
 jobs:
@@ -59,7 +59,7 @@ jobs:
         run: |
           jq -e '(.hooks // "") | test("hooks/hooks\\.json$") | not' \
             producers/claude/.claude-plugin/plugin.json >/dev/null || {
-            echo "plugin.json declares the auto-loaded hooks/hooks.json — remove the \"hooks\" key"
+            echo "plugin.json declares the auto-loaded hooks/hooks.json, remove the \"hooks\" key"
             exit 1
           }
       # Codex resolves .agents/plugins/marketplace.json before .claude-plugin's, so
@@ -80,7 +80,7 @@ jobs:
                           producers/codex/.codex-plugin/plugin.json; do
             plugin=$(jq -r .version "$manifest")
             test "$crate" = "$plugin" || {
-              echo "version drift: Cargo.toml=$crate $manifest=$plugin — run task bump"
+              echo "version drift: Cargo.toml=$crate $manifest=$plugin, run task bump"
               exit 1
             }
           done
@@ -88,7 +88,7 @@ jobs:
           # in the plugin file, which its debug log stamps every line with.
           plugin=$(perl -ne 'print "$1" if /^const VERSION = "(.*)"/' producers/opencode/zellij-agent-activity.js)
           test "$crate" = "$plugin" || {
-            echo "version drift: Cargo.toml=$crate opencode plugin=$plugin — run task bump"
+            echo "version drift: Cargo.toml=$crate opencode plugin=$plugin, run task bump"
             exit 1
           }
 

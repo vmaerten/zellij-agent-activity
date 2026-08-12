@@ -32,7 +32,7 @@ const TOOL_NAMES = new Map([
 ])
 
 // Never dump tool arguments: they can be large and can hold secrets. The raw
-// opencode names are kept, though — they are what a mapping bug is read from.
+// opencode names are kept, though: they are what a mapping bug is read from.
 const trace = async (entry) => {
   const path = process.env.ZELLIJ_AGENT_ACTIVITY_LOG
   if (!path) return

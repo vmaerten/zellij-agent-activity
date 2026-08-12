@@ -23,7 +23,7 @@ enum Sink {
 }
 
 /// Everything the plugin can do to the world. The core only emits these; the
-/// wasm adapter's `drive` is the sole place they touch the zellij host — so the
+/// wasm adapter's `drive` is the sole place they touch the zellij host, so the
 /// core below compiles and is tested natively, free of host calls (ADR-0004).
 #[derive(Debug, Clone, PartialEq)]
 enum Effect {
@@ -38,13 +38,13 @@ enum Effect {
         name: String,
     },
     UnblockCliPipe(String),
-    /// Diagnostic line, emitted only under `debug true` — except a config error,
+    /// Diagnostic line, emitted only under `debug true`, except a config error,
     /// which always is: a headless plugin has no other way to speak (ADR-0009).
     Log(String),
 }
 
 /// Drop one leading decoration so recomposing is idempotent. Once, not
-/// repeatedly — we only ever write one, and looping would eat a tab genuinely
+/// repeatedly: we only ever write one, and looping would eat a tab genuinely
 /// named `⚡ ✓ foo`.
 fn strip(name: &str) -> &str {
     for symbol in BUILTIN_SYMBOLS {
@@ -129,7 +129,7 @@ fn tool_symbol(name: &str) -> &'static str {
 /// `Notification` are handled separately in `on_activity`: both need the pane's
 /// state, which this function deliberately cannot see.
 ///
-/// `SubagentStop` is unmapped on purpose — subagents don't report at all, so it
+/// `SubagentStop` is unmapped on purpose: subagents don't report at all, so it
 /// says nothing about the agent that owns the pane (ADR-0007).
 fn activity_from_event(event: &str, tool: &str) -> Option<Activity> {
     Some(match event {
@@ -162,7 +162,7 @@ struct State {
     /// pane_id → last activity send-time (ms); drops events racing in out of
     /// order through parallel hook subprocesses (ADR-0003).
     last_ts: HashMap<u32, u64>,
-    /// Emit `Effect::Log` diagnostics — set from the `debug` plugin config key.
+    /// Emit `Effect::Log` diagnostics, set from the `debug` plugin config key.
     debug: bool,
 }
 
@@ -236,7 +236,7 @@ impl State {
             Some("rename") => Sink::Rename,
             other => {
                 self.effects.push(Effect::Log(format!(
-                    "config error: mode must be \"pipe\" or \"rename\", got {other:?} — doing nothing"
+                    "config error: mode must be \"pipe\" or \"rename\", got {other:?}, doing nothing"
                 )));
                 return std::mem::take(&mut self.effects);
             }
@@ -272,7 +272,7 @@ impl State {
     fn handle_pipe(&mut self, message: PipeMessage) -> Vec<Effect> {
         trace!(self, "pipe '{}' args={:?}", message.name, message.args);
         // Without a sink no permission was requested, so unblocking here would be
-        // a denied host call per hook — the drift ADR-0003 exists to prevent. It
+        // a denied host call per hook, the drift ADR-0003 exists to prevent. It
         // costs no latency either: zellij releases the pipe once a plugin has
         // handled the message, measured in ADR-0003. Don't "fix" this back.
         if let (PipeSource::Cli(pipe_id), Some(_)) = (&message.source, self.sink) {
@@ -301,7 +301,7 @@ impl State {
             self.last_ts.insert(pane_id, ts);
         }
         let Some(&tab_id) = self.pane_to_tab.get(&pane_id) else {
-            // pane not mapped yet — Claude events arrive long after load
+            // pane not mapped yet: Claude events arrive long after load
             trace!(self, "pane {pane_id}: drop, not mapped to a tab yet");
             return;
         };
@@ -315,7 +315,7 @@ impl State {
         if event == "Notification" {
             // An idle nudge asks for nothing: it fires on ~60s of idle *input*, so
             // it lands both after the turn ended and mid-tool. A real block ends the
-            // turn first, so it arrives as `permission` — never as a nudge.
+            // turn first, so it arrives as `permission`, never as a nudge.
             //
             // Any other kind, including one missing or unknown from an older or
             // newer producer, counts as needing the user: a wire change must never
@@ -439,7 +439,7 @@ impl State {
         });
     }
 
-    /// Deduplicates against the tab's own name, which we can see — so a user
+    /// Deduplicates against the tab's own name, which we can see, so a user
     /// rename is picked up and an undecorated tab is never renamed to itself.
     fn emit_rename(&mut self, tab_id: usize, symbol: Option<&str>) {
         let Some(current) = self.tab_name.get(&tab_id).cloned() else {
@@ -593,7 +593,7 @@ mod tests {
     fn each_sink_asks_only_for_what_it_uses() {
         // Under `pipe` the host is what stops this plugin renaming a tab, which
         // is ADR-0001's invariant; under `rename` it never drives the namer.
-        // `ReadCliPipes` is unrelated — both sinks receive from the producer.
+        // `ReadCliPipes` is unrelated: both sinks receive from the producer.
         for (sink, granted, withheld) in [
             (
                 "pipe",
@@ -646,7 +646,7 @@ mod tests {
             "…so ReadCliPipes must be requested, got {requested:?}"
         );
 
-        // And with no sink, no permission is requested — so nothing may be
+        // And with no sink, no permission is requested, so nothing may be
         // unblocked either, or every hook becomes a denied host call.
         let mut refused = State::default();
         refused.init(&BTreeMap::new());
@@ -919,7 +919,7 @@ mod tests {
     #[test]
     fn idle_nudge_after_a_finished_turn_is_ignored() {
         // The bug this fixes: ~60s after finishing, Claude fires `Notification`
-        // to reclaim attention, which flipped the tab from ✓ back to ⚠ — so every
+        // to reclaim attention, which flipped the tab from ✓ back to ⚠, so every
         // idle tab ended up shouting "come here" and the symbol meant nothing.
         let mut state = ready_state();
         state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
@@ -970,7 +970,7 @@ mod tests {
 
     #[test]
     fn a_permission_notification_always_warns() {
-        // Even on a finished turn — a permission prompt can only mean the user is
+        // Even on a finished turn: a permission prompt can only mean the user is
         // needed, whatever came before.
         let mut state = ready_state();
         state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
@@ -1227,7 +1227,7 @@ mod tests {
         for symbol in emitted {
             assert!(
                 BUILTIN_SYMBOLS.contains(&symbol),
-                "{symbol} can be written but not stripped — add it to BUILTIN_SYMBOLS"
+                "{symbol} can be written but not stripped: add it to BUILTIN_SYMBOLS"
             );
         }
     }
@@ -1248,7 +1248,7 @@ mod tests {
     #[test]
     fn rename_decorates_the_default_tab_name_as_it_finds_it() {
         // No namer, nobody named the tab: `⚠ Tab #3` is the nominal case, and it
-        // still says the only thing that matters — this tab wants you.
+        // still says the only thing that matters: this tab wants you.
         let mut state = ready_rename_state("Tab #3");
         let effects = state.handle_pipe(activity_pipe(&[
             ("pane_id", "10"),

@@ -11,7 +11,7 @@ Activity is tracked **per pane** (`pane_id → Activity`), then aggregated to th
 tab by taking the **highest-priority** activity among the tab's panes
 (`Waiting > Tool > Thinking > Init > Done`). A tab can hold several panes, hence
 several agents; there is only one prefix. Last-write-wins would let a background
-`Thinking ●` overwrite a foreground `Waiting ⚠` in the same tab — masking the
+`Thinking ●` overwrite a foreground `Waiting ⚠` in the same tab, masking the
 one state the tool exists to surface. Priority aggregation guarantees a pending
 permission request is never hidden.
 
@@ -21,6 +21,6 @@ permission request is never hidden.
   ordering; the winning activity per tab is recomputed on every event and on
   pane moves.
 - `Done ✓` persists (it is the lowest priority but still shown when nothing else
-  is active) — you can see at a glance which tabs have finished and await you.
+  is active): you can see at a glance which tabs have finished and await you.
 - The prefix string is `"{symbol} "`; the namer composes
   `{prefix}{base}{suffix}{count}` unchanged.

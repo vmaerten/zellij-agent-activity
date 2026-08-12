@@ -1,6 +1,6 @@
 // Tests the plugin: given an opencode hook or event, are the pipe args right?
 // Driven through the real hooks, with the same dry-run seam the shell producers
-// use — here it prints the args instead of piping them.
+// use: here it prints the args instead of piping them.
 
 import assert from "node:assert/strict"
 import test from "node:test"
