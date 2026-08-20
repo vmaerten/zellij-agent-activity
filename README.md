@@ -39,7 +39,7 @@ extra column, no rename war.
 
 ## Install
 
-You need Zellij 0.44.3 or later (`zellij --version`), plus `jq` and bash for the Claude Code and
+You need Zellij 0.45.0 or later (`zellij --version`), plus `jq` and bash for the Claude Code and
 Codex producers. The [compatibility matrix](docs/COMPATIBILITY.md) says which Zellij versions a
 given plugin version is built against.
 
