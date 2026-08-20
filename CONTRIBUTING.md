@@ -10,8 +10,8 @@ task ci       # what CI runs: fmt, clippy -D warnings, test, wasm build, produce
 
 The plugin is a pure state machine, events in and effects out, with a thin wasm-gated adapter that
 runs those effects against the Zellij host. The pane to tab routing and the priority aggregation are
-therefore exercised as ordinary unit tests, never in a live session. The seam is enforced by the
-linker: a host call in the core breaks the native build. See
+therefore exercised as ordinary unit tests, never in a live session. The seam is enforced by
+`clippy.toml`, which disallows the host functions outside the adapter. See
 [ADR-0004](docs/adr/0004-effects-seam-and-sink-abstraction.md).
 
 Producers have their own tests, run by `task ci` too:
