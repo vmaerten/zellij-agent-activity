@@ -73,8 +73,12 @@ Two 0.45 changes do matter, and neither is in the upstream release notes:
   when the tab draws titles (the new `pane_frame_style "titles"` default), Zellij hands plugins a
   derived name: the pane's own title if the tab still carries its default name, plus a
   ` [ EXIT CODE: n ] ` or ` [ EXITED ] ` suffix when that pane is held and exited. The suffix is
-  appended even to a tab someone renamed explicitly. Only the `rename` sink reads that field.
-  Setting `pane_frame_style "full"` disables the substitution entirely.
+  appended even to a tab someone renamed explicitly. Only the `rename` sink reads that field. It now
+  strips those suffixes before recomposing, and, the part that matters, dedupes against the stripped
+  name: zellij re-appends the suffix to whatever the plugin writes, so comparing against the reported
+  name made every `TabUpdate` look like a change and renamed in a tight loop (~4k renames/second,
+  observed on 0.45.0). A tab that accumulated suffixes under 0.1.x comes back clean on the first
+  rename. Setting `pane_frame_style "full"` disables the substitution entirely.
 - **The core/adapter seam is no longer linker-enforced**, see
   [ADR-0004](adr/0004-effects-seam-and-sink-abstraction.md).
 

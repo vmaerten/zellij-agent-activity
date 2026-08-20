@@ -47,12 +47,36 @@ enum Effect {
 /// repeatedly: we only ever write one, and looping would eat a tab genuinely
 /// named `⚡ ✓ foo`.
 fn strip(name: &str) -> &str {
+    let rest = without_exit_status(name);
     for symbol in BUILTIN_SYMBOLS {
-        if let Some(rest) = name.strip_prefix(symbol).and_then(|r| r.strip_prefix(' ')) {
-            return rest;
+        if let Some(stripped) = rest.strip_prefix(symbol).and_then(|r| r.strip_prefix(' ')) {
+            return stripped;
         }
     }
-    name
+    rest
+}
+
+/// The tab name as zellij actually stores it: what it reports, minus the
+/// decoration it renders on top. Repeated, unlike the symbol, so a name that
+/// accumulated several comes back clean in one pass.
+fn without_exit_status(name: &str) -> &str {
+    let mut rest = name;
+    while let Some(stripped) = strip_exit_status(rest) {
+        rest = stripped;
+    }
+    rest
+}
+
+/// The ` [ EXIT CODE: n ] ` / ` [ EXITED ] ` suffix that `single_pane_tab_name`
+/// adds when a lone tiled pane is held and exited. It is never part of
+/// `tab.name`, so folding it back in would make it permanent.
+fn strip_exit_status(name: &str) -> Option<&str> {
+    if let Some(head) = name.strip_suffix(" [ EXITED ] ") {
+        return Some(head);
+    }
+    let (head, code) = name.strip_suffix(" ] ")?.rsplit_once(" [ EXIT CODE: ")?;
+    let digits = code.strip_prefix('-').unwrap_or(code);
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some(head)
 }
 
 /// Queue a diagnostic line; `format!` is skipped when debug is off.
@@ -451,7 +475,10 @@ impl State {
             Some(s) => format!("{s} {base}"),
             None => base.to_string(),
         };
-        if composed == current {
+        // Against the stored name, not the reported one: zellij re-appends the
+        // exit status to whatever we write, so comparing with it would make
+        // every TabUpdate look like a change and rename in a tight loop.
+        if composed == without_exit_status(&current) {
             return;
         }
         trace!(self, "tab {tab_id}: rename {current:?} -> {composed:?}");
@@ -1136,6 +1163,91 @@ mod tests {
         let panes = state.handle(Event::PaneUpdate(manifest(&[(0, &[10]), (1, &[20])])));
         assert_eq!(rename_effects(&tabs), vec![]);
         assert_eq!(rename_effects(&panes), vec![]);
+    }
+
+    #[test]
+    fn a_re_appended_exit_status_is_not_a_change_to_rename_for() {
+        // Zellij re-appends the suffix to whatever we write, so every TabUpdate
+        // reports a name that differs from what we stored. Treating that as a
+        // change renames in a tight loop: ~4k renames/second, observed live.
+        let mut state = ready_rename_state("myrepo");
+        let first = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ]));
+        let written = rename_effects(&first)[0].1.clone();
+
+        for _ in 0..5 {
+            let reported = format!("{written} [ EXIT CODE: 1 ] ");
+            let effects = state.handle(Event::TabUpdate(vec![named_tab(1, 0, &reported)]));
+            assert_eq!(
+                rename_effects(&effects),
+                vec![],
+                "renamed for a suffix zellij adds itself: {reported:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rename_never_folds_zellij_s_exit_status_into_the_name() {
+        // Zellij 0.45 appends the suffix to a single-pane tab on top of the
+        // name we wrote, so recomposing it verbatim would make it permanent
+        // and it would grow one copy per activity change.
+        let mut state = ready_rename_state("myrepo");
+        let first = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ]));
+        let mut written = rename_effects(&first)[0].1.clone();
+        assert_eq!(written, "\u{26a1} myrepo");
+
+        for event in ["Stop", "PreToolUse", "Stop"] {
+            let observed = format!("{written} [ EXIT CODE: 0 ] ");
+            state.handle(Event::TabUpdate(vec![named_tab(1, 0, &observed)]));
+            let effects =
+                state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", event)]));
+            if let Some((_, name)) = rename_effects(&effects).first() {
+                written = name.clone();
+            }
+            assert!(
+                !written.contains("EXIT CODE"),
+                "the suffix leaked into the name we write: {written:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_that_already_accumulated_suffixes_comes_back_clean() {
+        // Upgrading from 0.1.x, a tab can carry several baked-in suffixes.
+        let mut state = ready_rename_state("myrepo");
+        state.handle_pipe(activity_pipe(&[("pane_id", "10"), ("hook_event", "Stop")]));
+        let polluted = "\u{2713} myrepo [ EXIT CODE: 0 ]  [ EXITED ]  [ EXIT CODE: -1 ] ";
+        state.handle(Event::TabUpdate(vec![named_tab(1, 0, polluted)]));
+        let effects = state.handle_pipe(activity_pipe(&[
+            ("pane_id", "10"),
+            ("hook_event", "PreToolUse"),
+            ("tool_name", "Bash"),
+        ]));
+        assert_eq!(
+            rename_effects(&effects),
+            vec![(1, "\u{26a1} myrepo".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_name_that_merely_looks_like_an_exit_status_is_kept() {
+        assert_eq!(
+            strip("build [ EXIT CODE: two ] "),
+            "build [ EXIT CODE: two ] "
+        );
+        assert_eq!(
+            strip("release [ EXIT CODE:  ] "),
+            "release [ EXIT CODE:  ] "
+        );
+        assert_eq!(strip("deploy [ EXIT CODE: 0 ]"), "deploy [ EXIT CODE: 0 ]");
+        assert_eq!(strip("my [ EXITED ] repo"), "my [ EXITED ] repo");
     }
 
     #[test]
