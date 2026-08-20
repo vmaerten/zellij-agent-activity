@@ -7,6 +7,7 @@ Which plugin release works with which Zellij, and what to do when either moves.
 | Plugin | `zellij-tile` | Zellij tested | Pipe protocol |
 |---|---|---|---|
 | 0.1.x | 0.44.3 | 0.44.3 | `agent_activity.v1` |
+| 0.2.x | 0.45.0 | 0.45.0 | `agent_activity.v1` |
 
 Every GitHub Release links back here, and states the `zellij-tile` version it was built against,
 that line is derived from `Cargo.lock` at release time, so it can never drift from the artifact.
@@ -20,14 +21,14 @@ misbehaves. So the `zellij-tile` version *is* the compatibility contract with Ze
 
 ## Policy: pin the minor, float the patch
 
-`Cargo.toml` declares `zellij-tile = "0.44"`:
+`Cargo.toml` declares `zellij-tile = "0.45"`:
 
-- **Patch releases float** (0.44.0 → 0.44.3): picked up automatically, no plugin release needed.
-- **The minor is the anchor** (0.44 → 0.45): a bump can raise the floor or break the ABI, so it is
+- **Patch releases float** (0.45.0 → 0.45.1): picked up automatically, no plugin release needed.
+- **The minor is the anchor** (0.45 → 0.46): a bump can raise the floor or break the ABI, so it is
   treated as **at least a minor bump of the plugin**, with a new row in the matrix above and an
   updated floor in the README.
 
-The stated floor ("requires Zellij >= 0.44.3") has an implicit ceiling at the next Zellij minor:
+The stated floor ("requires Zellij >= 0.45.0") has an implicit ceiling at the next Zellij minor:
 a newer Zellij minor may require a rebuild against the matching `zellij-tile`.
 
 Only **one** Zellij minor is targeted at a time: the current stable. If supporting several ever
@@ -59,6 +60,23 @@ fatal), so either side can update first. Only a breaking wire change bumps the p
 does so by renaming the pipe.
 
 ## Migration notes
+
+### 0.2.x
+
+Built against Zellij 0.45. Nothing on the wire moved: the pipe system is byte-identical between
+0.44.3 and 0.45.0, the protocol stays `agent_activity.v1`, and producers need no update. None of the
+host functions this plugin calls changed signature either, so the bump itself needed no code change.
+
+Two 0.45 changes do matter, and neither is in the upstream release notes:
+
+- **`TabInfo.name` is no longer `tab.name`.** For a tab with a single selectable tiled pane, and
+  when the tab draws titles (the new `pane_frame_style "titles"` default), Zellij hands plugins a
+  derived name: the pane's own title if the tab still carries its default name, plus a
+  ` [ EXIT CODE: n ] ` or ` [ EXITED ] ` suffix when that pane is held and exited — the suffix is
+  appended even to a tab someone renamed explicitly. Only the `rename` sink reads that field.
+  Setting `pane_frame_style "full"` disables the substitution entirely.
+- **The core/adapter seam is no longer linker-enforced**, see
+  [ADR-0004](adr/0004-effects-seam-and-sink-abstraction.md).
 
 ### 0.1.x
 
