@@ -72,7 +72,7 @@ Two 0.45 changes do matter, and neither is in the upstream release notes:
 - **`TabInfo.name` is no longer `tab.name`.** For a tab with a single selectable tiled pane, and
   when the tab draws titles (the new `pane_frame_style "titles"` default), Zellij hands plugins a
   derived name: the pane's own title if the tab still carries its default name, plus a
-  ` [ EXIT CODE: n ] ` or ` [ EXITED ] ` suffix when that pane is held and exited — the suffix is
+  ` [ EXIT CODE: n ] ` or ` [ EXITED ] ` suffix when that pane is held and exited. The suffix is
   appended even to a tab someone renamed explicitly. Only the `rename` sink reads that field.
   Setting `pane_frame_style "full"` disables the substitution entirely.
 - **The core/adapter seam is no longer linker-enforced**, see
