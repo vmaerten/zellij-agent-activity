@@ -3,9 +3,18 @@
 The plugin follows the namer's pattern (its ADR-0001): a pure core
 (`init` / `handle` / `handle_pipe` take zellij events, return `Vec<Effect>`) and
 a thin `ZellijPlugin` adapter gated to `#[cfg(target_arch = "wasm32")]` that
-executes the effects. Host functions are wasm-only extern symbols, so the gate
-is linker-enforced: a host call in the core fails the native build, and the
-pane→tab races are exercised as native unit tests instead of in a live session.
+executes the effects. The pane→tab races are exercised as native unit tests
+instead of in a live session.
+
+Until `zellij-tile` 0.44 the seam enforced itself: host functions were extern
+symbols that only existed on wasm, so a host call in the core failed to link
+natively. 0.45 stubs `host_run_plugin_command` out to a no-op on native, and
+that guarantee is gone: the call now compiles, writes JSON to a stdout nobody
+reads, and the suite stays green while the plugin misbehaves on wasm.
+`clippy.toml` replaces it, listing the host functions as `disallowed-methods`;
+`task ci` already runs `clippy -D warnings`, and `drive()` carries the only
+allow. The list is nominative, so extend it when the adapter learns a new host
+call.
 
 The key effect is deliberately abstract:
 `Effect::ShowActivity { tab_id, symbol: Option<String> }`: "this tab should

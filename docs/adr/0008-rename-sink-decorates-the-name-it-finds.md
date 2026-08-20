@@ -145,7 +145,7 @@ what it can actually see.
   onto host functions. This refines ADR-0004: the invariant there is *the
   adapter decides nothing*, not *the sink lives in the adapter*. Putting the
   strip in `drive` would have parked the only real logic of this feature on the
-  one side of the linker `cargo test` cannot reach.
+  one side of the seam `cargo test` cannot reach.
 - The core gains `tab_name: HashMap<usize, String>`, filled from `TabUpdate`.
   Everything else (strip, composition, the emit rule) stays in the pure core
   and is tested natively.
