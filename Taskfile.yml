@@ -126,3 +126,16 @@ tasks:
       - git push origin HEAD
       - git push origin v{{.NEW}}
       - 'echo "released v{{.NEW}}. The Release workflow will build & publish the wasm."'
+
+  codex-proxy-check:
+    desc: Check the standalone host Rust proxy experiment.
+    cmds:
+      - cargo fmt --manifest-path producers/codex/codex-zellij/Cargo.toml --check
+      - cargo clippy --manifest-path producers/codex/codex-zellij/Cargo.toml --all-targets -- -D warnings
+      - cargo test --manifest-path producers/codex/codex-zellij/Cargo.toml
+
+  codex-proxy-installed:
+    desc: Test the installed Codex server in isolation and reproduce the hook suppression race.
+    cmds:
+      - cargo test --manifest-path producers/codex/codex-zellij/Cargo.toml --test installed -- --ignored
+      - python3 producers/codex/codex-zellij/tests/probe_installed.py

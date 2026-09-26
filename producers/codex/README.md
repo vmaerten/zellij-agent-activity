@@ -96,3 +96,9 @@ printf '{"hook_event_name":"PreToolUse","tool_name":"apply_patch"}' \
 ```
 
 `scripts/test-forwarder.sh` runs the normalization assertions on top of that flag.
+
+## Shared-daemon experiment on this branch
+
+This branch contains a [throwaway routing experiment](codex-zellij/README.md). See its test commands,
+limits, and the [comparison of both tracks](../../docs/CODEX-DAEMON-COMPARISON.md) before trying it.
+The experiment is not a released compatibility claim.
