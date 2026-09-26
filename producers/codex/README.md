@@ -77,7 +77,11 @@ gets the same `⚠`, and its `PostToolUse` carries the answer, which clears it.
 
 `◉` is rare here: Codex has no read tool, it reads files by running shell commands.
 
-Requires `bash`, `jq` and `zellij` on the `PATH`.
+On this experimental branch, requires `bash`, `python3`, `jq` and `zellij` on the `PATH`.
+The producer cooperates with [codex-zellij](codex-zellij/README.md): conversations owned by
+launcher views suppress their legacy hook emissions until the final view leaves. Other
+conversations retain normal hook behavior. A private directory under
+`~/.local/state/zellij-agent-activity/codex-v1` holds OS lock files for this coordination.
 
 ## Debugging
 
@@ -96,3 +100,10 @@ printf '{"hook_event_name":"PreToolUse","tool_name":"apply_patch"}' \
 ```
 
 `scripts/test-forwarder.sh` runs the normalization assertions on top of that flag.
+
+## Shared-daemon candidate on this branch
+
+The [autonomous launcher](codex-zellij/README.md) now supports coordinated handoff with this
+updated producer, including hot resume and multiple views. It does not require a Codex patch.
+Both halves must be installed from this branch; the published producer is not compatible.
+See the [comparison and validation limits](../../docs/CODEX-DAEMON-COMPARISON.md).

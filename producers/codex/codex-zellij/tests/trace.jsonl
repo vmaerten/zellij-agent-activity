@@ -1,0 +1,10 @@
+{"direction":"client","message":{"id":1,"method":"thread/start","params":{"cwd":"/same/repo"}},"expected":"Clear"}
+{"direction":"server","message":{"id":1,"result":{"thread":{"id":"one"}}},"expected":"Init"}
+{"direction":"server","message":{"method":"turn/started","params":{"threadId":"one"}},"expected":"Thinking"}
+{"direction":"server","message":{"method":"item/started","params":{"threadId":"one","item":{"id":"a","type":"commandExecution"}}},"expected":"Tool(\"Bash\")"}
+{"direction":"server","message":{"method":"item/started","params":{"threadId":"one","item":{"id":"b","type":"fileChange"}}},"expected":"Tool(\"Edit\")"}
+{"direction":"server","message":{"id":2,"method":"item/tool/requestUserInput","params":{"threadId":"one","itemId":"b"}},"expected":"Waiting"}
+{"direction":"client","message":{"id":2,"result":{"answers":{}}},"expected":"Waiting"}
+{"direction":"server","message":{"method":"serverRequest/resolved","params":{"threadId":"one","requestId":2}},"expected":"Tool(\"Edit\")"}
+{"direction":"server","message":{"method":"item/completed","params":{"threadId":"one","item":{"id":"b","type":"fileChange"}}},"expected":"Tool(\"Bash\")"}
+{"direction":"server","message":{"method":"turn/completed","params":{"threadId":"one","turn":{"status":"interrupted"}}},"expected":"Done"}

@@ -8,6 +8,12 @@ command -v jq >/dev/null 2>&1 || exit 0
 TS_MS=$(jq -nc 'now * 1000 | floor')
 
 INPUT=$(cat)
+# COORDINATION_PROTOCOL=1: acquire the conversation gate before any legacy emission.
+if [ "${1:-}" != "--coordinated" ]; then
+  command -v python3 >/dev/null 2>&1 || exit 0
+  printf '%s' "$INPUT" | python3 "$(dirname "$0")/coordination.py" "$0"
+  exit 0
+fi
 HOOK_EVENT=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty')
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')
 
@@ -73,7 +79,7 @@ fi
 # asynchronously yet, so every event stalls the agent for however long this
 # takes. A consumed pipe answers in milliseconds; 2s only ever caps the case
 # where the Zellij plugin was never loaded.
-zellij pipe --name agent_activity.v1 --args "$ARGS" &
+zellij --session "$ZELLIJ_SESSION_NAME" pipe --name agent_activity.v1 --args "$ARGS" &
 pipe_pid=$!
 ( sleep 2; kill "$pipe_pid" 2>/dev/null ) &
 watchdog_pid=$!
