@@ -1,5 +1,36 @@
 # Codex shared-daemon routing: experiment results
 
+## Autonomous continuation
+
+The proxy branch now has cooperative producer ownership. Its previous blocker is resolved **for
+the updated producer**: a per-thread gate drains an already-running emitter before the proxy
+acquires a shared lease. Hooks for that conversation then remain silent while any view holds a
+lease; unrelated conversations are unchanged. Last-view exit restores hooks without modifying
+Codex configuration. This requires updating both the producer and launcher; it cannot retrofit
+locks into an old script that is already running.
+
+Normal launch is now `codex-zellij` (or `codex-zellij -- resume`), with a preflight check for the
+known old activity producer. The candidate is still unreleased. See
+[installation, lifecycle, tests and remaining limits](../producers/codex/codex-zellij/README.md).
+The per-thread files coordinate ownership only; they contain no pane destination registry.
+
+Validated in this continuation: the original failing hook/lease regression now passes, including
+in-flight draining, independent conversations, two simultaneous views, and last-owner crash
+recovery. The same producer and Rust ownership paths pass with installed `codex-cli 0.157.0`
+in a disposable home. The staged producer also installs successfully in an isolated home, and
+the real TUI starts/selects a conversation through the normal launcher and shuts down cleanly.
+No real model inference, visual Zellij acceptance, user installation, or production daemon restart
+was performed. In particular, the guarantee applies after acquisition;
+it does not erase stale legacy indicators emitted before handoff or cover hard-killing an active
+Zellij emitter. The historical comparison below records the first iteration's findings.
+
+Upstream contribution policy checked during this continuation: Codex accepts issue reports,
+reproductions and technical analysis, but **does not accept external code contributions or PRs**.
+The native proposal is therefore suitable issue material, not an unsolicited PR.
+[Official contribution policy](https://github.com/openai/codex/blob/main/docs/contributing.md).
+
+## Initial comparison (before cooperative ownership)
+
 Both branches start from `main` at `af85530`. They are independent experiments, not a stack.
 The original checkout's local deletion of `.cargo/config.toml` and edits to troubleshooting and
 Codex producer documentation were preserved; neither worktree includes those uncommitted changes.

@@ -1,5 +1,5 @@
 //! Opt-in integration with the installed app-server. Never connects to the user's daemon.
-use codex_zellij::{relay, Activity};
+use codex_zellij::{relay, Activity, View};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{process::Stdio, time::Duration};
@@ -61,11 +61,14 @@ async fn installed_codex_shared_server_via_two_proxies() {
     })
     .await
     .unwrap();
+    codex_zellij::preflight::check(path.to_str().unwrap(), dir.path())
+        .await
+        .unwrap();
     let mut clients = Vec::new();
     let mut relays = Vec::new();
     for _ in 0..2 {
         let (a, b) = UnixStream::pair().unwrap();
-        let (tx, _rx) = watch::channel(Activity::Clear);
+        let (tx, _rx) = watch::channel(View::default());
         let path = path.clone();
         relays.push(tokio::spawn(async move {
             relay(b, path.to_str().unwrap(), tx).await

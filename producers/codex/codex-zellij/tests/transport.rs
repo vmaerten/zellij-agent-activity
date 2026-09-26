@@ -1,4 +1,4 @@
-use codex_zellij::{relay, sink, Activity};
+use codex_zellij::{relay, sink, Activity, View};
 use futures_util::{SinkExt, StreamExt};
 use std::{os::unix::fs::PermissionsExt, time::Duration};
 use tokio::{
@@ -14,7 +14,7 @@ async fn bidirectional_permissions_unknown_messages_binary_and_daemon_restart() 
     let path = dir.path().join("daemon.sock");
     let daemon = UnixListener::bind(&path).unwrap();
     let (left, right) = UnixStream::pair().unwrap();
-    let (tx, rx) = watch::channel(Activity::Clear);
+    let (tx, rx) = watch::channel(View::default());
     let upstream_path = path.clone();
     let relay_task =
         tokio::spawn(async move { relay(right, upstream_path.to_str().unwrap(), tx).await });
@@ -50,13 +50,13 @@ async fn bidirectional_permissions_unknown_messages_binary_and_daemon_restart() 
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(*rx.borrow(), Activity::Clear);
+    assert_eq!(*rx.borrow(), View::default());
     // A fresh instance can connect after the daemon is restarted (no implicit RPC retry).
     drop(daemon);
     std::fs::remove_file(&path).unwrap();
     let restarted = UnixListener::bind(&path).unwrap();
     let (left, right) = UnixStream::pair().unwrap();
-    let (tx, _) = watch::channel(Activity::Clear);
+    let (tx, _) = watch::channel(View::default());
     let second = tokio::spawn(async move { relay(right, path.to_str().unwrap(), tx).await });
     let (mut client, _) = client_async("ws://localhost/", left).await.unwrap();
     let (stream, _) = restarted.accept().await.unwrap();

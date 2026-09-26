@@ -41,6 +41,10 @@ fn launcher_captures_view_and_removes_private_socket_after_child_exit() {
         )
         .env("ZELLIJ_SESSION_NAME", "view-session")
         .env("ZELLIJ_PANE_ID", "46")
+        .env(
+            "ZELLIJ_AGENT_ACTIVITY_COORDINATION_DIR",
+            root.join("coordination"),
+        )
         .output()
         .unwrap();
     assert!(
@@ -61,10 +65,13 @@ fn launcher_captures_view_and_removes_private_socket_after_child_exit() {
 }
 
 #[test]
-fn normal_use_is_explicitly_blocked() {
+fn conflicting_remote_flags_are_rejected() {
     let result = Command::new(env!("CARGO_BIN_EXE_codex-zellij"))
+        .args(["--", "--remote", "unix:///elsewhere"])
         .output()
         .unwrap();
     assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("hook suppression is not reliable"));
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("codex-zellij owns the remote connection")
+    );
 }

@@ -1,4 +1,6 @@
-//! Throwaway local-daemon experiment. No Codex payloads are logged or answered.
+//! Local-daemon activity bridge. No Codex payloads are logged or answered.
+pub mod ownership;
+pub mod preflight;
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -35,6 +37,20 @@ impl Activity {
             args.push_str(",notification=permission");
         }
         args
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct View {
+    pub thread: Option<String>,
+    pub activity: Activity,
+}
+impl Default for View {
+    fn default() -> Self {
+        Self {
+            thread: None,
+            activity: Activity::Clear,
+        }
     }
 }
 
@@ -121,6 +137,12 @@ pub struct Observer {
     threads: HashMap<String, ThreadState>,
 }
 impl Observer {
+    pub fn view(&self) -> View {
+        View {
+            thread: self.selected.clone(),
+            activity: self.activity(),
+        }
+    }
     pub fn activity(&self) -> Activity {
         self.selected
             .as_ref()
@@ -239,50 +261,135 @@ pub async fn sink(
     executable: String,
     deadline: Duration,
 ) {
-    let mut last_timestamp = 0;
+    let mut timestamp = 0;
     while rx.changed().await.is_ok() {
         let activity = rx.borrow_and_update().clone();
-        last_timestamp = (SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis())
-        .max(last_timestamp + 1);
-        let mut cmd = Command::new(&executable);
-        cmd.args([
-            "--session",
+        emit(
+            &activity,
             &session,
-            "pipe",
-            "--name",
-            "agent_activity.v1",
-            "--args",
-            &activity.args(pane, last_timestamp),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-        if let Ok(mut child) = cmd.spawn() {
-            if timeout(deadline, child.wait()).await.is_err() {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-            }
+            pane,
+            &executable,
+            deadline,
+            &mut timestamp,
+        )
+        .await;
+    }
+}
+
+async fn emit(
+    activity: &Activity,
+    session: &str,
+    pane: u32,
+    executable: &str,
+    deadline: Duration,
+    timestamp: &mut u128,
+) {
+    *timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .max(*timestamp + 1);
+    let mut cmd = Command::new(executable);
+    cmd.args([
+        "--session",
+        session,
+        "pipe",
+        "--name",
+        "agent_activity.v1",
+        "--args",
+        &activity.args(pane, *timestamp),
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .kill_on_drop(true);
+    if let Ok(mut child) = cmd.spawn() {
+        if timeout(deadline, child.wait()).await.is_err() {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
         }
     }
+}
+
+/// Ownership is acquired in the sink worker, never on the Codex forwarding path.
+/// Hooks already emitting finish before activation. Hooks still queued see the lease and stop.
+pub async fn coordinated_sink(
+    mut rx: watch::Receiver<View>,
+    session: String,
+    pane: u32,
+    executable: String,
+    deadline: Duration,
+    root: std::path::PathBuf,
+) {
+    let mut owned: Option<(String, ownership::Ownership)> = None;
+    let mut timestamp = 0;
+    while rx.changed().await.is_ok() {
+        let mut view = rx.borrow_and_update().clone();
+        if owned.as_ref().map(|(thread, _)| thread) != view.thread.as_ref() {
+            if owned.is_some() {
+                emit(
+                    &Activity::Clear,
+                    &session,
+                    pane,
+                    &executable,
+                    deadline,
+                    &mut timestamp,
+                )
+                .await;
+            }
+            owned = None;
+            if let Some(thread) = &view.thread {
+                match ownership::Ownership::acquire(&root, thread).await {
+                    Ok(lease) => owned = Some((thread.clone(), lease)),
+                    Err(error) => {
+                        eprintln!("codex-zellij: activity unavailable: {error}");
+                        continue;
+                    }
+                }
+                // Selection or activity may have changed while the old hook was draining.
+                if rx.borrow().thread != view.thread {
+                    continue;
+                }
+                view = rx.borrow_and_update().clone();
+            }
+        }
+        emit(
+            &view.activity,
+            &session,
+            pane,
+            &executable,
+            deadline,
+            &mut timestamp,
+        )
+        .await;
+    }
+    if owned.is_some() {
+        emit(
+            &Activity::Clear,
+            &session,
+            pane,
+            &executable,
+            deadline,
+            &mut timestamp,
+        )
+        .await;
+    }
+    // Last-view drop restores the legacy producer without changing Codex configuration.
 }
 
 pub async fn relay(
     client: UnixStream,
     upstream_path: &str,
-    states: watch::Sender<Activity>,
+    states: watch::Sender<View>,
 ) -> Result<()> {
     let result = relay_inner(client, upstream_path, &states).await;
-    states.send_replace(Activity::Clear);
+    states.send_replace(View::default());
     result
 }
 async fn relay_inner(
     client: UnixStream,
     upstream_path: &str,
-    states: &watch::Sender<Activity>,
+    states: &watch::Sender<View>,
 ) -> Result<()> {
     let mut downstream = timeout(Duration::from_secs(5), accept_async(client)).await??;
     let upstream = timeout(Duration::from_secs(5), UnixStream::connect(upstream_path)).await??;
@@ -307,7 +414,7 @@ async fn relay_inner(
                 } else {
                     observer.server(&value);
                 }
-                let next = observer.activity();
+                let next = observer.view();
                 states.send_if_modified(|old| {
                     if *old == next {
                         false

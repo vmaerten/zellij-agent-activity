@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 import time
 import threading
+import select
+import sys
 
 
 class Rpc:
@@ -56,7 +58,10 @@ class Rpc:
 def run_turn(rpc, thread):
     result = rpc.call('turn/start', {'threadId': thread,
         'input': [{'type': 'text', 'text': 'probe', 'text_elements': []}]})
-    turn = result['turn']['id']
+    finish_turn(rpc, thread, result['turn']['id'])
+
+
+def finish_turn(rpc, thread, turn):
     interrupted = False
     index = 0
     while True:
@@ -75,7 +80,52 @@ def run_turn(rpc, thread):
             return
 
 
-def probe():
+def coordinated_probe(rpc, root, marker):
+    from handoff import OWNER, until
+    thread=rpc.call('thread/start', {'cwd':str(root)})['thread']['id']
+    run_turn(rpc,thread)
+    assert marker.exists(), 'control hook never emitted'
+    other=rpc.call('thread/start',{'cwd':str(root)})['thread']['id']
+    run_turn(rpc,other)
+    marker.write_text('')
+    (root/'hold').touch()
+    turn=rpc.call('turn/start',{'threadId':thread,'input':[{'type':'text','text':'probe','text_elements':[]}]})['turn']['id']
+    until(lambda:(root/'entered').exists(),'old hook never reached its Zellij subprocess')
+    rpc.call('thread/resume', {'threadId':thread})
+    owners=[]
+    def acquire():
+        owner=subprocess.Popen([str(OWNER),str(root/'coordination'),thread],stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        owners.append(owner)
+        assert owner.stdout.readline().strip()=='acquiring'
+        return owner
+    try:
+        first=acquire()
+        assert not select.select([first.stdout],[],[],.1)[0], 'ownership acquired before old hook drained'
+        (root/'release').touch()
+        assert first.stdout.readline().strip()=='owned'
+        finish_turn(rpc,thread,turn)
+        marker.write_text('')
+        run_turn(rpc,thread)
+        assert marker.read_text()=='', 'managed Codex hook still emitted after ownership'
+        run_turn(rpc,other)
+        assert any(json.loads(line)['session_id']==other for line in marker.read_text().splitlines())
+        second=acquire()
+        assert second.stdout.readline().strip()=='owned'
+        first.kill(); first.wait(timeout=5)
+        marker.write_text('')
+        run_turn(rpc,thread)
+        assert marker.read_text()=='', 'one departing view released another view ownership'
+        second.kill(); second.wait(timeout=5)
+        run_turn(rpc,thread)
+        assert any(json.loads(line)['session_id']==thread for line in marker.read_text().splitlines()), 'last view did not restore Codex hooks'
+        print('PASS on installed Codex: hot resume drained; no competing hooks; unrelated thread preserved; last view restores hooks without config mutation.')
+    finally:
+        for owner in owners:
+            if owner.poll() is None: owner.kill(); owner.wait(timeout=5)
+
+
+def probe(coordinated=False):
     with tempfile.TemporaryDirectory(prefix='zca-probe-', dir='/tmp') as directory:
         root = Path(directory)
         home = root / 'home'
@@ -100,11 +150,28 @@ def probe():
                           ' while not (root/"release").exists() and time.monotonic()<deadline: time.sleep(.01)\n'
                           f'with open({str(marker)!r}, "a") as f:\n'
                           ' f.write(json.dumps({k:p.get(k) for k in ["session_id","hook_event_name"]})+"\\n")\n')
+        if coordinated:
+            forwarder = Path(__file__).resolve().parents[2] / 'scripts/forwarder.sh'
+            script.write_text('import json,sys,os,subprocess\np=json.load(sys.stdin)\n'
+                'env=dict(os.environ,ZCA_THREAD=p["session_id"],ZCA_EVENT=p["hook_event_name"])\n'
+                f'subprocess.run(["bash",{str(forwarder)!r}],input=json.dumps(p),text=True,env=env,check=True)\n')
+            sink=root/'zellij'
+            sink.write_text('#!/usr/bin/env python3\nimport json,os,pathlib,time\n'
+                f'root=pathlib.Path({str(root)!r})\n'
+                'if os.environ["ZCA_EVENT"]=="UserPromptSubmit" and (root/"hold").exists():\n'
+                ' (root/"entered").touch()\n'
+                ' while not (root/"release").exists(): time.sleep(.01)\n'
+                'with (root/"events.jsonl").open("a") as f:\n'
+                ' f.write(json.dumps({"session_id":os.environ["ZCA_THREAD"],"hook_event_name":os.environ["ZCA_EVENT"]})+"\\n")\n')
+            sink.chmod(0o700)
         (plugin / 'hooks/hooks.json').write_text(json.dumps({'hooks': {
             event: [{'hooks': [{'type': 'command', 'command': f'python3 {script}', 'timeout': 12}]}]
             for event in ['SessionStart', 'UserPromptSubmit']}}))
         env = {k: v for k, v in os.environ.items() if not any(x in k for x in ['TOKEN', 'API_KEY', 'CODEX', 'OPENAI', 'ZELLIJ'])}
         env.update(CODEX_HOME=str(home))
+        if coordinated:
+            env.update(PATH=str(root)+':'+env['PATH'],ZELLIJ_SESSION_NAME='legacy',ZELLIJ_PANE_ID='26',
+                       ZELLIJ_AGENT_ACTIVITY_COORDINATION_DIR=str(root/'coordination'))
         # The loopback provider is deliberately unavailable: UserPromptSubmit runs before inference.
         (home / 'config.toml').write_text('model_provider="probe"\nmodel="probe"\n'
             '[model_providers.probe]\nname="probe"\nbase_url="http://127.0.0.1:1/v1"\nwire_api="responses"\n'
@@ -122,6 +189,9 @@ def probe():
                     for hook in hooks:
                         config.write(f'\n[hooks.state.{json.dumps(hook["key"])}]\ntrusted_hash={json.dumps(hook["currentHash"])}\n')
                 rpc = Rpc(env, root, log)
+                if coordinated:
+                    coordinated_probe(rpc, root, marker)
+                    return
                 key = 'plugins.activity-probe@activity-probe.enabled'
                 plain = rpc.call('thread/start', {'cwd': str(root)})['thread']['id']
                 run_turn(rpc, plain)
@@ -179,4 +249,4 @@ def probe():
 
 
 if __name__ == '__main__':
-    probe()
+    probe(coordinated='--coordinated' in sys.argv)

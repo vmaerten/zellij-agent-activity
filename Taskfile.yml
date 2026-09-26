@@ -133,9 +133,23 @@ tasks:
       - cargo fmt --manifest-path producers/codex/codex-zellij/Cargo.toml --check
       - cargo clippy --manifest-path producers/codex/codex-zellij/Cargo.toml --all-targets -- -D warnings
       - cargo test --manifest-path producers/codex/codex-zellij/Cargo.toml
+      - cargo build --manifest-path producers/codex/codex-zellij/Cargo.toml --example hold-lease
+      - python3 producers/codex/codex-zellij/tests/handoff.py
 
   codex-proxy-installed:
-    desc: Test the installed Codex server in isolation and reproduce the hook suppression race.
+    desc: Validate installed Codex and cooperative handoff in isolation.
     cmds:
       - cargo test --manifest-path producers/codex/codex-zellij/Cargo.toml --test installed -- --ignored
+      - cargo build --manifest-path producers/codex/codex-zellij/Cargo.toml --example hold-lease
       - python3 producers/codex/codex-zellij/tests/probe_installed.py
+      - python3 producers/codex/codex-zellij/tests/probe_installed.py --coordinated
+      - task: codex-proxy-package
+      - cargo build --manifest-path producers/codex/codex-zellij/Cargo.toml
+      - python3 producers/codex/codex-zellij/tests/tui_smoke.py
+
+  codex-proxy-package:
+    desc: Stage only the coordinated producer files as a local Codex marketplace.
+    cmds:
+      - mkdir -p target/codex-proxy-marketplace/.agents/plugins target/codex-proxy-marketplace/producer
+      - jq '.plugins[0].source = "./producer"' .agents/plugins/marketplace.json > target/codex-proxy-marketplace/.agents/plugins/marketplace.json
+      - cp -R producers/codex/.codex-plugin producers/codex/hooks producers/codex/scripts target/codex-proxy-marketplace/producer/
